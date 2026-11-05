@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 import tensorflow as tf
-from unet_model import unet
+from models import unet
 import config
 
 

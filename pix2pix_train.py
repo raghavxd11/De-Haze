@@ -4,7 +4,7 @@ from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.metrics import Mean
 from pathlib import Path
 import config
-from pix2pix import generator_model, generator_loss, discriminator_loss, discriminator_model
+from models import unet, discriminator as build_discriminator, generator_loss, discriminator_loss
 
 
 # ---------------------------------------------------------------------------
@@ -58,8 +58,8 @@ def train_pix2pix(
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     # ── Build models ──────────────────────────────────────────────────────────
-    generator     = generator_model()
-    discriminator = discriminator_model()
+    generator     = unet()
+    discriminator = build_discriminator()
 
     # ── Optimizers ────────────────────────────────────────────────────────────
     generator_optimizer     = Adam(learning_rate=2e-4, beta_1=0.5)

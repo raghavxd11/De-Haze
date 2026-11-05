@@ -31,3 +31,6 @@ Thumbs.db
 
 # Claude Code local settings (not committed)
 .claude/
+
+# Old code kept locally after simplification (not committed)
+_old/
