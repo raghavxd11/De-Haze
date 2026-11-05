@@ -1,22 +1,13 @@
-"""
-infer.py -- Unified command-line inference entry point for De-Haze.
+"""Dehaze an image or a video and count people with HOG.
 
-Usage:
-    python infer.py --model-path PATH --input IMG_OR_VIDEO
-                    --output outputs/ [--no-display] [--no-detect]
-                    [--detect-on dehazed|hazy] [--preprocess MODE]
+    python infer.py --model-path outputs/models/unet/unet.keras --input sample_test_files/hazed_img.jpg
+    python infer.py --model-path outputs/models/unet/unet.keras --input sample_test_files/test_vid.mp4 --no-display
 """
-
 import argparse
 import json
 import sys
 import time
 from pathlib import Path
-
-# Add repo root to sys.path
-REPO_ROOT = Path(__file__).resolve().parent
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
 
 import cv2
 import numpy as np
@@ -26,372 +17,171 @@ import config
 from detect import draw_boxes, hog_human_detection
 from preprocess import prepare_input
 
-IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
-VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".wmv", ".webm"}
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
+VIDEO_EXTS = {".mp4", ".avi", ".mov", ".mkv", ".wmv", ".webm"}
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(
-        description="Run De-Haze model inference on an image or video with human detection.",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    parser.add_argument(
-        "--model-path",
-        type=Path,
-        required=True,
-        help="Path to trained model (.keras or .h5 file).",
-    )
-    parser.add_argument(
-        "--input",
-        type=Path,
-        required=True,
-        help="Path to input image or video file.",
-    )
-    parser.add_argument(
-        "--output",
-        type=Path,
-        default=config.OUTPUTS_DIR,
-        help="Directory or file path to save dehazed outputs.",
-    )
-    parser.add_argument(
-        "--no-display",
-        action="store_true",
-        help="Disable interactive display window (cv2.imshow).",
-    )
-    parser.add_argument(
-        "--no-detect",
-        action="store_true",
-        help="Disable HOG human detection.",
-    )
-    parser.add_argument(
-        "--detect-on",
-        type=str,
-        choices=["dehazed", "hazy"],
-        default="dehazed",
-        help="Detect humans on 'dehazed' output or on clean copy of 'hazy' input.",
-    )
-    parser.add_argument(
-        "--preprocess",
-        type=str,
-        choices=["clahe_hls", "clahe", "none"],
-        default=None,
-        help="Preprocessing mode override. If omitted, read from model's sidecar JSON.",
-    )
-    return parser.parse_args()
+def fail(msg):
+    print(f"[ERROR] {msg}", file=sys.stderr)
+    sys.exit(1)
 
 
-def load_dehaze_model(model_path: Path) -> tf.keras.Model:
-    """Load model with compile=False for both .keras and .h5 formats."""
+def load_model(model_path):
     if not model_path.exists():
-        print(f"[FATAL ERROR] Model file not found: {model_path}", file=sys.stderr)
-        sys.exit(1)
-
-    suffix = model_path.suffix.lower()
-    if suffix not in {".keras", ".h5"}:
-        print(
-            f"[FATAL ERROR] Unsupported model format '{suffix}'. Model file must be .keras or .h5.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
+        fail(f"Model file not found: {model_path}")
+    if model_path.suffix.lower() not in {".keras", ".h5"}:
+        fail(f"Model file must be .keras or .h5, got '{model_path.suffix}'")
     try:
+        # compile=False: we only predict, and it avoids needing the custom metrics
         model = tf.keras.models.load_model(str(model_path), compile=False)
-        print(f"[Inference] Successfully loaded model from {model_path} (compile=False)")
-        return model
     except Exception as e:
-        print(f"[FATAL ERROR] Failed to load model {model_path}: {e}", file=sys.stderr)
-        sys.exit(1)
+        fail(f"Could not load {model_path}: {e}")
+    print(f"[Infer] Loaded {model_path}")
+    return model
 
 
-def resolve_preprocess_mode(model_path: Path, cli_mode: str | None) -> str:
-    """Read preprocess mode from sidecar JSON or CLI override, with warning on mismatch."""
-    sidecar_path = model_path.with_suffix(".json")
-    sidecar_mode = None
-
-    if sidecar_path.exists():
+def preprocess_mode(model_path, cli_mode=None):
+    """Use the mode the model was trained with (from its .json sidecar) unless --preprocess is given."""
+    sidecar = model_path.with_suffix(".json")
+    saved_mode = None
+    if sidecar.exists():
         try:
-            meta = json.loads(sidecar_path.read_text(encoding="utf-8"))
-            sidecar_mode = meta.get("preprocess_mode")
-            if sidecar_mode:
-                print(f"[Inference] Model sidecar ({sidecar_path.name}) specified mode: '{sidecar_mode}'")
+            saved_mode = json.loads(sidecar.read_text(encoding="utf-8")).get("preprocess_mode")
+            print(f"[Infer] {sidecar.name} says preprocess mode '{saved_mode}'")
         except Exception as e:
-            print(f"[WARNING] Could not read sidecar {sidecar_path}: {e}", file=sys.stderr)
+            print(f"[WARNING] Could not read {sidecar}: {e}", file=sys.stderr)
 
     if cli_mode is not None:
-        if sidecar_mode is not None and cli_mode != sidecar_mode:
-            print(
-                f"[WARNING] Explicit --preprocess '{cli_mode}' differs from model sidecar "
-                f"mode '{sidecar_mode}'. Explicit flag takes precedence.",
-                file=sys.stderr,
-            )
+        if saved_mode is not None and cli_mode != saved_mode:
+            print(f"[WARNING] --preprocess '{cli_mode}' differs from the model's '{saved_mode}'; "
+                  f"using '{cli_mode}'.", file=sys.stderr)
         return cli_mode
-
-    if sidecar_mode is not None:
-        return sidecar_mode
-
-    print(f"[Inference] No sidecar mode found; falling back to config default '{config.PREPROCESS_MODE}'")
+    if saved_mode is not None:
+        return saved_mode
+    print(f"[Infer] No sidecar found; using default '{config.PREPROCESS_MODE}'")
     return config.PREPROCESS_MODE
 
 
-def process_frame(
-    model: tf.keras.Model,
-    frame: np.ndarray,
-    mode: str,
-    detect_on: str,
-    no_detect: bool,
-) -> tuple[np.ndarray, list]:
-    """Execute single-frame dehaze and detection pipeline."""
-    orig_h, orig_w = frame.shape[:2]
+def dehaze_frame(model, frame, mode, detect_on="dehazed", detect=True):
+    """Dehaze one BGR frame. Returns (output at the input's size, people boxes)."""
+    h, w = frame.shape[:2]
+    x = prepare_input(frame, mode).astype(np.float32) / 255.0
+    pred = model(tf.convert_to_tensor(x[None], dtype=tf.float32), training=False)
+    if isinstance(pred, (list, tuple)):
+        pred = pred[0]
+    pred = np.array(pred[0])
+    dehazed = cv2.resize(np.clip(pred * 255.0, 0, 255).astype(np.uint8), (w, h),
+                         interpolation=cv2.INTER_LINEAR)
 
-    # 1. Prepare input: preprocess at original resolution then resize to 256x256
-    model_in_uint8 = prepare_input(frame, mode=mode, size=config.IMG_SIZE)
-    model_in_norm = model_in_uint8.astype(np.float32) / 255.0
-    model_input = tf.convert_to_tensor(np.expand_dims(model_in_norm, axis=0), dtype=tf.float32)
-
-    # 2. Call model directly
-    pred_tensor = model(model_input, training=False)
-    if isinstance(pred_tensor, (list, tuple)):
-        pred_tensor = pred_tensor[0]
-    pred_arr = pred_tensor[0].numpy() if hasattr(pred_tensor[0], "numpy") else np.array(pred_tensor[0])
-
-    # Convert to uint8 before drawing or writing
-    dehazed_256_u8 = np.clip(pred_arr * 255.0, 0, 255).astype(np.uint8)
-
-    # 3. Resize dehazed output back to original frame size
-    dehazed_full = cv2.resize(dehazed_256_u8, (orig_w, orig_h), interpolation=cv2.INTER_LINEAR)
-
-    # 4. Human detection
-    rectangles = []
-    if not no_detect:
-        if detect_on == "dehazed":
-            rectangles = hog_human_detection(dehazed_full)
-        elif detect_on == "hazy":
-            # Detect on clean copy of original input
-            rectangles = hog_human_detection(frame.copy())
-        else:
-            raise ValueError(f"Unknown detect_on mode '{detect_on}'")
-
-        # 5. Draw boxes and human count onto dehazed output ONLY
-        out_frame = draw_boxes(dehazed_full, rectangles)
-    else:
-        out_frame = dehazed_full
-
-    return out_frame, rectangles
+    if not detect:
+        return dehazed, []
+    # Boxes are drawn only on the output, never on the frame given to the model
+    rects = hog_human_detection(dehazed if detect_on == "dehazed" else frame.copy())
+    return draw_boxes(dehazed, rects), rects
 
 
-def infer_image(
-    model: tf.keras.Model,
-    input_path: Path,
-    output_dest: Path,
-    mode: str,
-    detect_on: str,
-    no_display: bool,
-    no_detect: bool,
-):
-    """Run inference on a single image and save as PNG."""
-    raw_img = cv2.imread(str(input_path))
-    if raw_img is None:
-        print(f"[FATAL ERROR] Could not decode image file: {input_path}", file=sys.stderr)
-        sys.exit(1)
+def output_file(output, input_path, ext, tag):
+    # A path without an extension is treated as a folder
+    if output.is_dir() or output.suffix == "":
+        output.mkdir(parents=True, exist_ok=True)
+        return output / f"dehazed_{input_path.stem}{tag}{ext}"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    return output.with_suffix(ext)
 
-    orig_h, orig_w = raw_img.shape[:2]
+
+def infer_image(model, args, mode, tag):
+    img = cv2.imread(str(args.input))
+    if img is None:
+        fail(f"Could not read image: {args.input}")
+
     t0 = time.perf_counter()
+    out, rects = dehaze_frame(model, img, mode, args.detect_on, not args.no_detect)
+    ms = (time.perf_counter() - t0) * 1000
+    out_file = output_file(args.output, args.input, ".png", tag)
+    cv2.imwrite(str(out_file), out)
 
-    out_img, rects = process_frame(
-        model=model,
-        frame=raw_img,
-        mode=mode,
-        detect_on=detect_on,
-        no_detect=no_detect,
-    )
-
-    elapsed_ms = (time.perf_counter() - t0) * 1000.0
-
-    # Determine output file path
-    if output_dest.is_dir() or output_dest.suffix == "":
-        output_dest.mkdir(parents=True, exist_ok=True)
-        detect_tag = f"_{detect_on}" if not no_detect else ""
-        out_file = output_dest / f"dehazed_{input_path.stem}{detect_tag}.png"
-    else:
-        output_dest.parent.mkdir(parents=True, exist_ok=True)
-        out_file = output_dest.with_suffix(".png")
-
-    cv2.imwrite(str(out_file), out_img)
-
-    # Optional display
-    if not no_display:
-        cv2.imshow("Original Input", raw_img)
-        cv2.imshow("Dehazed Output", out_img)
-        print("[Inference] Displaying output window (press any key to close)...")
+    if not args.no_display:
+        cv2.imshow("Original Input", img)
+        cv2.imshow("Dehazed Output", out)
+        print("[Infer] Press any key to close the windows")
         cv2.waitKey(0)
         cv2.destroyAllWindows()
 
-    out_h, out_w = out_img.shape[:2]
-    size_equal = (orig_h, orig_w) == (out_h, out_w)
-
-    print("\n" + "=" * 70)
-    print("IMAGE INFERENCE SUMMARY")
-    print("=" * 70)
-    print(f"  Input file:             {input_path}")
-    print(f"  Output file:            {out_file}")
-    print(f"  Frames processed:       1")
-    print(f"  Average ms per frame:   {elapsed_ms:.2f} ms")
-    print(f"  Human count:            {len(rects) if not no_detect else 'Detection disabled'}")
-    print(f"  Input size:             {orig_w}x{orig_h}")
-    print(f"  Output size:            {out_w}x{out_h}")
-    print(f"  Output size == Input:   {size_equal}")
-    print("=" * 70)
+    humans = "detection off" if args.no_detect else len(rects)
+    print(f"[Infer] Saved {out_file}")
+    print(f"[Infer] 1 frame, {ms:.2f} ms, humans: {humans}, "
+          f"size {img.shape[1]}x{img.shape[0]} -> {out.shape[1]}x{out.shape[0]}")
 
 
-def infer_video(
-    model: tf.keras.Model,
-    input_path: Path,
-    output_dest: Path,
-    mode: str,
-    detect_on: str,
-    no_display: bool,
-    no_detect: bool,
-):
-    """Run inference on a video file and save with cv2.VideoWriter (mp4v)."""
-    cap = cv2.VideoCapture(str(input_path))
+def infer_video(model, args, mode, tag):
+    cap = cv2.VideoCapture(str(args.input))
     if not cap.isOpened():
-        print(f"[FATAL ERROR] Could not open video file: {input_path}", file=sys.stderr)
-        sys.exit(1)
-
-    orig_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    orig_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        fail(f"Could not open video: {args.input}")
+    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = cap.get(cv2.CAP_PROP_FPS)
     if fps <= 0 or np.isnan(fps):
         fps = 25.0
+    out_file = output_file(args.output, args.input, ".mp4", tag)
+    writer = cv2.VideoWriter(str(out_file), cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
 
-    # Determine destination video path
-    if output_dest.is_dir() or output_dest.suffix == "":
-        output_dest.mkdir(parents=True, exist_ok=True)
-        detect_tag = f"_{detect_on}" if not no_detect else ""
-        out_file = output_dest / f"dehazed_{input_path.stem}{detect_tag}.mp4"
-    else:
-        output_dest.parent.mkdir(parents=True, exist_ok=True)
-        out_file = output_dest.with_suffix(".mp4")
-
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter(str(out_file), fourcc, fps, (orig_w, orig_h))
-
-    frame_count = 0
-    total_time_ms = 0.0
-    human_counts = []
-
+    frames, total_ms, counts = 0, 0.0, []
     try:
-        # Loop handles unknown or streaming frame counts safely
         while True:
-            ret, frame = cap.read()
-            if not ret or frame is None:
+            ok, frame = cap.read()
+            if not ok or frame is None:
                 break
-
             t0 = time.perf_counter()
-            out_frame, rects = process_frame(
-                model=model,
-                frame=frame,
-                mode=mode,
-                detect_on=detect_on,
-                no_detect=no_detect,
-            )
-            elapsed = (time.perf_counter() - t0) * 1000.0
-
-            writer.write(out_frame)
-            frame_count += 1
-            total_time_ms += elapsed
-            if not no_detect:
-                human_counts.append(len(rects))
-
-            if not no_display:
-                cv2.imshow("Dehazed Video Output", out_frame)
+            out, rects = dehaze_frame(model, frame, mode, args.detect_on, not args.no_detect)
+            total_ms += (time.perf_counter() - t0) * 1000
+            writer.write(out)
+            frames += 1
+            counts.append(len(rects))
+            if not args.no_display:
+                cv2.imshow("Dehazed Video Output", out)
                 if cv2.waitKey(1) & 0xFF == ord("q"):
-                    print("[Inference] Video processing interrupted by user.")
+                    print("[Infer] Stopped by user")
                     break
     finally:
         cap.release()
         writer.release()
-        if not no_display:
+        if not args.no_display:
             cv2.destroyAllWindows()
 
-    avg_ms = total_time_ms / frame_count if frame_count > 0 else 0.0
-    avg_humans = sum(human_counts) / len(human_counts) if human_counts else 0.0
-    latest_humans = human_counts[-1] if human_counts else (0 if not no_detect else "Detection disabled")
-
-    print("\n" + "=" * 70)
-    print("VIDEO INFERENCE SUMMARY")
-    print("=" * 70)
-    print(f"  Input file:             {input_path}")
-    print(f"  Output file:            {out_file}")
-    print(f"  Frames processed:       {frame_count}")
-    print(f"  Average ms per frame:   {avg_ms:.2f} ms")
-    print(f"  Human counts:           latest={latest_humans}, mean={avg_humans:.2f}")
-    print(f"  Input size:             {orig_w}x{orig_h}")
-    print(f"  Output size:            {orig_w}x{orig_h}")
-    print(f"  Output size == Input:   True")
-    print("=" * 70)
+    if args.no_detect:
+        humans = "detection off"
+    else:
+        humans = f"latest {counts[-1] if counts else 0}, mean {sum(counts) / max(len(counts), 1):.2f}"
+    print(f"[Infer] Saved {out_file}")
+    print(f"[Infer] {frames} frames, {total_ms / max(frames, 1):.2f} ms/frame, humans: {humans}, size {w}x{h}")
 
 
 def main():
-    args = parse_args()
+    parser = argparse.ArgumentParser(description="Dehaze an image or video and detect people.")
+    parser.add_argument("--model-path", type=Path, required=True, help=".keras or .h5 file")
+    parser.add_argument("--input", type=Path, required=True, help="image or video file")
+    parser.add_argument("--output", type=Path, default=config.OUTPUTS_DIR, help="folder or file path")
+    parser.add_argument("--no-display", action="store_true", help="do not open windows")
+    parser.add_argument("--no-detect", action="store_true", help="skip human detection")
+    parser.add_argument("--detect-on", choices=["dehazed", "hazy"], default="dehazed",
+                        help="run HOG on the dehazed output or on the original input")
+    parser.add_argument("--preprocess", choices=config.PREPROCESS_MODES,
+                        help="override the mode stored in the model's .json sidecar")
+    args = parser.parse_args()
 
-    # 1. Validate input file
-    input_path = args.input
-    if not input_path.exists():
-        print(f"[FATAL ERROR] Input file does not exist: {input_path}", file=sys.stderr)
-        sys.exit(1)
+    if not args.input.exists():
+        fail(f"Input file not found: {args.input}")
+    mode = preprocess_mode(args.model_path, args.preprocess)
+    model = load_model(args.model_path)
+    tag = "" if args.no_detect else f"_{args.detect_on}"
 
-    # 2. Resolve preprocess mode from sidecar or CLI
-    mode = resolve_preprocess_mode(args.model_path, args.preprocess)
-
-    # 3. Load model (compile=False supports .keras and .h5)
-    model = load_dehaze_model(args.model_path)
-
-    # 4. Dispatch based on file type
-    suffix = input_path.suffix.lower()
-    if suffix in VIDEO_EXTENSIONS:
-        infer_video(
-            model=model,
-            input_path=input_path,
-            output_dest=args.output,
-            mode=mode,
-            detect_on=args.detect_on,
-            no_display=args.no_display,
-            no_detect=args.no_detect,
-        )
-    elif suffix in IMAGE_EXTENSIONS:
-        infer_image(
-            model=model,
-            input_path=input_path,
-            output_dest=args.output,
-            mode=mode,
-            detect_on=args.detect_on,
-            no_display=args.no_display,
-            no_detect=args.no_detect,
-        )
+    ext = args.input.suffix.lower()
+    if ext in VIDEO_EXTS:
+        infer_video(model, args, mode, tag)
+    elif ext in IMAGE_EXTS or cv2.imread(str(args.input)) is not None:
+        infer_image(model, args, mode, tag)
     else:
-        # Fallback probe
-        probe_img = cv2.imread(str(input_path))
-        if probe_img is not None:
-            infer_image(
-                model=model,
-                input_path=input_path,
-                output_dest=args.output,
-                mode=mode,
-                detect_on=args.detect_on,
-                no_display=args.no_display,
-                no_detect=args.no_detect,
-            )
-        else:
-            infer_video(
-                model=model,
-                input_path=input_path,
-                output_dest=args.output,
-                mode=mode,
-                detect_on=args.detect_on,
-                no_display=args.no_display,
-                no_detect=args.no_detect,
-            )
+        infer_video(model, args, mode, tag)
 
 
 if __name__ == "__main__":
