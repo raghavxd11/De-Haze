@@ -3,11 +3,11 @@ from tensorflow.keras.layers import (
     Input, Conv2D, BatchNormalization, Concatenate,
 )
 from tensorflow.keras.models import Model
-from config import config
+import config
 from unet_model import unet
 
 
-def generator_model(input_shape=config.input_shape):
+def generator_model(input_shape=config.INPUT_SHAPE):
     return unet(input_shape)
 
 
@@ -25,7 +25,7 @@ def generator_loss(disc_generated_output, gen_output, target, LAMBDA=100):
     return total_gen_loss, gan_loss, l1_loss
 
 
-def discriminator_model(input_shape=config.input_shape):
+def discriminator_model(input_shape=config.INPUT_SHAPE):
     """PatchGAN discriminator (70×70 receptive field).
 
     Outputs a spatial map of shape (None, H', W', 1) where each element

@@ -22,7 +22,7 @@ import cv2
 import numpy as np
 import tensorflow as tf
 
-from config import config
+import config
 from detect import draw_boxes, hog_human_detection
 from preprocess import prepare_input
 
@@ -50,7 +50,7 @@ def parse_args():
     parser.add_argument(
         "--output",
         type=Path,
-        default=config.infer_output_dir,
+        default=config.OUTPUTS_DIR,
         help="Directory or file path to save dehazed outputs.",
     )
     parser.add_argument(
@@ -67,7 +67,7 @@ def parse_args():
         "--detect-on",
         type=str,
         choices=["dehazed", "hazy"],
-        default=config.default_detect_on,
+        default="dehazed",
         help="Detect humans on 'dehazed' output or on clean copy of 'hazy' input.",
     )
     parser.add_argument(
@@ -129,8 +129,8 @@ def resolve_preprocess_mode(model_path: Path, cli_mode: str | None) -> str:
     if sidecar_mode is not None:
         return sidecar_mode
 
-    print(f"[Inference] No sidecar mode found; falling back to config default '{config.preprocess_mode}'")
-    return config.preprocess_mode
+    print(f"[Inference] No sidecar mode found; falling back to config default '{config.PREPROCESS_MODE}'")
+    return config.PREPROCESS_MODE
 
 
 def process_frame(
@@ -144,7 +144,7 @@ def process_frame(
     orig_h, orig_w = frame.shape[:2]
 
     # 1. Prepare input: preprocess at original resolution then resize to 256x256
-    model_in_uint8 = prepare_input(frame, mode=mode, target_size=config.target_size)
+    model_in_uint8 = prepare_input(frame, mode=mode, target_size=config.IMG_SIZE)
     model_in_norm = model_in_uint8.astype(np.float32) / 255.0
     model_input = tf.convert_to_tensor(np.expand_dims(model_in_norm, axis=0), dtype=tf.float32)
 

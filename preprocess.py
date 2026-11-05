@@ -1,5 +1,5 @@
 import cv2
-from config import config
+import config
 
 
 # Supported preprocessing modes:
@@ -53,8 +53,8 @@ def preprocess(frame, mode: str = "clahe_hls"):
 
 def prepare_input(
     frame,
-    mode: str = config.preprocess_mode,
-    target_size: tuple[int, int] = config.target_size,
+    mode: str = config.PREPROCESS_MODE,
+    target_size: tuple[int, int] = config.IMG_SIZE,
 ):
     """Prepare a BGR image identically for training and inference.
 

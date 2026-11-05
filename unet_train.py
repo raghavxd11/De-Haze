@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 import tensorflow as tf
 from unet_model import unet
-from config import config
+import config
 
 
 # ---------------------------------------------------------------------------
@@ -29,12 +29,12 @@ def train_unet(
     val_data=None,
     y_train=None,
     y_val=None,
-    input_shape=config.input_shape,
-    output_dir=config.unet_model_dir,
-    num_epochs=config.unet_epochs,
-    batch_size=config.unet_batch_size,
+    input_shape=config.INPUT_SHAPE,
+    output_dir=config.MODELS_DIR,
+    num_epochs=config.UNET_EPOCHS,
+    batch_size=config.UNET_BATCH_SIZE,
     model_name="my_Model",
-    preprocess_mode=config.preprocess_mode,
+    preprocess_mode=config.PREPROCESS_MODE,
 ):
     """Train the U-Net dehazing model.
 

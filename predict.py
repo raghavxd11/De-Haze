@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 import tensorflow as tf
 
-from config import config
+import config
 from detect import draw_boxes, hog_human_detection
 from preprocess import prepare_input
 
@@ -25,7 +25,7 @@ def load_preprocess_mode_from_sidecar(model_path: str | Path) -> str:
                 return mode
         except Exception as e:
             print(f"[Inference WARNING] Could not read sidecar {sidecar}: {e}")
-    return config.preprocess_mode
+    return config.PREPROCESS_MODE
 
 
 def predict_and_visualize(
@@ -48,7 +48,7 @@ def predict_and_visualize(
         img: Input BGR image (numpy array, original resolution).
         mode: Preprocessing mode ("clahe_hls" | "clahe" | "none").
               If None and model_path provided, reads from sidecar JSON.
-              Defaults to config.preprocess_mode ("clahe_hls").
+              Defaults to config.PREPROCESS_MODE ("clahe_hls").
         model_path: Optional path to model file for sidecar lookup.
         detect_on: "dehazed" (default) or "hazy".
         show: If True, display windows using cv2.imshow.
@@ -59,12 +59,12 @@ def predict_and_visualize(
     if mode is None and model_path is not None:
         mode = load_preprocess_mode_from_sidecar(model_path)
     elif mode is None:
-        mode = config.preprocess_mode
+        mode = config.PREPROCESS_MODE
 
     orig_h, orig_w = img.shape[:2]
 
     # 1. Prepare input: preprocess at original resolution then resize to 256x256
-    model_in_uint8 = prepare_input(img, mode=mode, target_size=config.target_size)
+    model_in_uint8 = prepare_input(img, mode=mode, target_size=config.IMG_SIZE)
     model_in_norm = model_in_uint8.astype(np.float32) / 255.0
     model_input = tf.convert_to_tensor(np.expand_dims(model_in_norm, axis=0), dtype=tf.float32)
 
@@ -141,7 +141,7 @@ def vid_read(
     if mode is None and model_path is not None:
         mode = load_preprocess_mode_from_sidecar(model_path)
     elif mode is None:
-        mode = config.preprocess_mode
+        mode = config.PREPROCESS_MODE
 
     cap = cv2.VideoCapture(str(directory))
     frame_count = 0
@@ -154,7 +154,7 @@ def vid_read(
         orig_h, orig_w = frame.shape[:2]
 
         # 1. Prepare input: preprocess at original resolution then resize to 256x256
-        model_in_uint8 = prepare_input(frame, mode=mode, target_size=config.target_size)
+        model_in_uint8 = prepare_input(frame, mode=mode, target_size=config.IMG_SIZE)
         model_in_norm = model_in_uint8.astype(np.float32) / 255.0
         model_input = tf.convert_to_tensor(np.expand_dims(model_in_norm, axis=0), dtype=tf.float32)
 

@@ -3,7 +3,7 @@ import tensorflow as tf
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.metrics import Mean
 from pathlib import Path
-from config import config
+import config
 from pix2pix import generator_model, generator_loss, discriminator_loss, discriminator_model
 
 
@@ -26,14 +26,14 @@ def train_pix2pix(
     train_dataset,
     val_dataset,
     output_dir,
-    num_epochs=config.pix2pix_epochs,
-    batch_size=config.pix2pix_batch_size,
+    num_epochs=config.P2P_EPOCHS,
+    batch_size=config.P2P_BATCH_SIZE,
     model_name="model_name",
     lambda_val=100,
     resume=False,
     checkpoint_dir=None,
-    checkpoint_every=config.checkpoint_every_n_epochs,
-    preprocess_mode=config.preprocess_mode,
+    checkpoint_every=config.CHECKPOINT_EVERY,
+    preprocess_mode=config.PREPROCESS_MODE,
 ):
     """Train the Pix2Pix model.
 
@@ -53,7 +53,7 @@ def train_pix2pix(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if checkpoint_dir is None:
-        checkpoint_dir = config.checkpoint_dir
+        checkpoint_dir = config.CHECKPOINT_DIR
     checkpoint_dir = Path(checkpoint_dir)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
@@ -158,7 +158,7 @@ def train_pix2pix(
         "model_name": model_name,
         "model_type": "pix2pix_generator",
         "preprocess_mode": preprocess_mode,
-        "input_shape": list(config.input_shape),
+        "input_shape": list(config.INPUT_SHAPE),
     }
     sidecar_path = output_dir / f"{model_name}.json"
     sidecar_path.write_text(json.dumps(sidecar_meta, indent=2), encoding="utf-8")

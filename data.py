@@ -27,7 +27,7 @@ import cv2
 import numpy as np
 import tensorflow as tf
 
-from config import config
+import config
 from preprocess import preprocess, prepare_input
 
 logger = logging.getLogger(__name__)
@@ -49,9 +49,9 @@ def _compute_cache_key(
 
 def load_and_cache_pairs(
     pairs: Sequence[Tuple[Path, Path]],
-    target_size: Tuple[int, int] = config.target_size,
-    preprocess_mode: str = config.preprocess_mode,
-    cache_dir: Path = config.cache_dir,
+    target_size: Tuple[int, int] = config.IMG_SIZE,
+    preprocess_mode: str = config.PREPROCESS_MODE,
+    cache_dir: Path = config.CACHE_DIR,
     split_name: str = "data",
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Load, preprocess hazy images, resize directly to uint8, and cache on disk.
@@ -131,8 +131,8 @@ def load_and_cache_pairs(
 
 
 def get_small_pairs(
-    hazy_dir: Path = config.hazy_small_dir,
-    gt_dir: Path = config.gt_small_dir,
+    hazy_dir: Path = config.HAZY_SMALL_DIR,
+    gt_dir: Path = config.GT_SMALL_DIR,
 ) -> Tuple[list[Tuple[Path, Path]], list[Tuple[Path, Path]]]:
     """Deterministic 80/20 train/val split of the 55 outdoor pairs (IDs 01-55)."""
     hazy_files = {p.name: p for p in sorted(hazy_dir.iterdir())
@@ -163,9 +163,9 @@ def get_small_pairs(
 
 
 def get_split_pairs(
-    split_file: Path = config.split_file,
-    hazy_dir: Path = config.hazy_full_dir,
-    gt_dir: Path = config.gt_full_dir,
+    split_file: Path = config.SPLIT_FILE,
+    hazy_dir: Path = config.HAZY_FULL_DIR,
+    gt_dir: Path = config.GT_FULL_DIR,
 ) -> Tuple[list[Tuple[Path, Path]], list[Tuple[Path, Path]], list[Tuple[Path, Path]]]:
     """Read train, val, and test pairs defined in splits/split_v1.json."""
     if not split_file.exists():
@@ -191,7 +191,7 @@ def make_tf_dataset(
     batch_size: int,
     is_training: bool = False,
     shuffle_buffer: int = 1000,
-    seed: int = config.seed,
+    seed: int = config.SEED,
 ) -> tf.data.Dataset:
     """Create an efficient tf.data.Dataset from uint8 numpy arrays.
 
@@ -220,11 +220,11 @@ def make_tf_dataset(
 
 
 def get_dehaze_datasets(
-    split_file: Path = config.split_file,
+    split_file: Path = config.SPLIT_FILE,
     hazy_dir: Path | None = None,
     gt_dir: Path | None = None,
-    batch_size: int = config.batch_size,
-    preprocess_mode: str = config.preprocess_mode,
+    batch_size: int = config.UNET_BATCH_SIZE,
+    preprocess_mode: str = config.PREPROCESS_MODE,
     small: bool = False,
     shuffle_buffer: int = 1000,
 ) -> Tuple[tf.data.Dataset, tf.data.Dataset]:
@@ -248,28 +248,28 @@ def get_dehaze_datasets(
         print("[Data] NOTE: This subset is outdoor only and is a debug/smoke-test mode")
         print("[Data] that must NOT be used for formal benchmark numbers.")
         print("=" * 70)
-        h_dir = hazy_dir or config.hazy_small_dir
-        g_dir = gt_dir or config.gt_small_dir
+        h_dir = hazy_dir or config.HAZY_SMALL_DIR
+        g_dir = gt_dir or config.GT_SMALL_DIR
         train_pairs, val_pairs = get_small_pairs(h_dir, g_dir)
         train_prefix, val_prefix = "small_train", "small_val"
     else:
-        h_dir = hazy_dir or config.hazy_full_dir
-        g_dir = gt_dir or config.gt_full_dir
+        h_dir = hazy_dir or config.HAZY_FULL_DIR
+        g_dir = gt_dir or config.GT_FULL_DIR
         train_pairs, val_pairs, _ = get_split_pairs(split_file, h_dir, g_dir)
         train_prefix, val_prefix = "full_train", "full_val"
 
     train_hazy, train_gt = load_and_cache_pairs(
         train_pairs,
-        target_size=config.target_size,
+        target_size=config.IMG_SIZE,
         preprocess_mode=preprocess_mode,
-        cache_dir=config.cache_dir,
+        cache_dir=config.CACHE_DIR,
         split_name=train_prefix,
     )
     val_hazy, val_gt = load_and_cache_pairs(
         val_pairs,
-        target_size=config.target_size,
+        target_size=config.IMG_SIZE,
         preprocess_mode=preprocess_mode,
-        cache_dir=config.cache_dir,
+        cache_dir=config.CACHE_DIR,
         split_name=val_prefix,
     )
 
@@ -288,9 +288,9 @@ def get_dehaze_datasets(
 
 
 def load_and_split(
-    hazy_dir: Path | str = config.hazy_small_dir,
-    gt_dir: Path | str = config.gt_small_dir,
-    preprocess_mode: str = config.preprocess_mode,
+    hazy_dir: Path | str = config.HAZY_SMALL_DIR,
+    gt_dir: Path | str = config.GT_SMALL_DIR,
+    preprocess_mode: str = config.PREPROCESS_MODE,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, Tuple[int, int, int]]:
     """Deterministic loader returning float32 numpy arrays [0, 1] without sklearn train_test_split.
 
@@ -301,10 +301,10 @@ def load_and_split(
     train_pairs, val_pairs = get_small_pairs(h_dir, g_dir)
 
     X_train_u8, y_train_u8 = load_and_cache_pairs(
-        train_pairs, config.target_size, preprocess_mode, config.cache_dir, "compat_train"
+        train_pairs, config.IMG_SIZE, preprocess_mode, config.CACHE_DIR, "compat_train"
     )
     X_val_u8, y_val_u8 = load_and_cache_pairs(
-        val_pairs, config.target_size, preprocess_mode, config.cache_dir, "compat_val"
+        val_pairs, config.IMG_SIZE, preprocess_mode, config.CACHE_DIR, "compat_val"
     )
 
     X_train = X_train_u8.astype(np.float32) / 255.0
@@ -312,4 +312,4 @@ def load_and_split(
     X_val = X_val_u8.astype(np.float32) / 255.0
     y_val = y_val_u8.astype(np.float32) / 255.0
 
-    return X_train, X_val, y_train, y_val, config.input_shape
+    return X_train, X_val, y_train, y_val, config.INPUT_SHAPE

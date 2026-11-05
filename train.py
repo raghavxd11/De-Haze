@@ -16,7 +16,7 @@ REPO_ROOT = Path(__file__).resolve().parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from config import config
+import config
 from data import get_dehaze_datasets
 from splits.split_builder import build_split
 from unet_train import train_unet
@@ -32,20 +32,20 @@ def parse_args():
         "--model",
         type=str,
         choices=["unet", "pix2pix"],
-        default=config.default_model,
+        default="unet",
         help="Model architecture to train.",
     )
     parser.add_argument(
         "--epochs",
         type=int,
         default=None,
-        help="Number of training epochs (default: config.unet_epochs or config.pix2pix_epochs).",
+        help="Number of training epochs (default: config.UNET_EPOCHS or config.P2P_EPOCHS).",
     )
     parser.add_argument(
         "--batch-size",
         type=int,
         default=None,
-        help="Mini-batch size (default: config.unet_batch_size or config.pix2pix_batch_size).",
+        help="Mini-batch size (default: config.UNET_BATCH_SIZE or config.P2P_BATCH_SIZE).",
     )
     parser.add_argument(
         "--small",
@@ -61,7 +61,7 @@ def parse_args():
         "--preprocess",
         type=str,
         choices=["clahe_hls", "clahe", "none"],
-        default=config.preprocess_mode,
+        default=config.PREPROCESS_MODE,
         help="Preprocessing mode for hazy images.",
     )
     parser.add_argument(
@@ -89,24 +89,24 @@ def main():
     if args.rebuild_split:
         print("[Train] Rebuilding split_v1.json as requested by --rebuild-split...")
         build_split(
-            hazy_dir=config.hazy_full_dir,
-            gt_dir=config.gt_full_dir,
+            hazy_dir=config.HAZY_FULL_DIR,
+            gt_dir=config.GT_FULL_DIR,
             rebuild=True,
         )
 
     # 2. Resolve hyperparameters
     if args.model == "unet":
-        epochs = args.epochs if args.epochs is not None else config.unet_epochs
-        batch_size = args.batch_size if args.batch_size is not None else config.unet_batch_size
+        epochs = args.epochs if args.epochs is not None else config.UNET_EPOCHS
+        batch_size = args.batch_size if args.batch_size is not None else config.UNET_BATCH_SIZE
     else:
-        epochs = args.epochs if args.epochs is not None else config.pix2pix_epochs
-        batch_size = args.batch_size if args.batch_size is not None else config.pix2pix_batch_size
+        epochs = args.epochs if args.epochs is not None else config.P2P_EPOCHS
+        batch_size = args.batch_size if args.batch_size is not None else config.P2P_BATCH_SIZE
 
     # Output directory defaults to outputs/models/<model> (gitignored)
     if args.output_dir is not None:
         output_dir = Path(args.output_dir)
     else:
-        output_dir = config.train_output_dir / args.model
+        output_dir = config.MODELS_DIR / args.model
 
     output_dir.mkdir(parents=True, exist_ok=True)
 

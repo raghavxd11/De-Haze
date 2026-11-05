@@ -38,16 +38,16 @@ if hasattr(sys.stderr, "reconfigure"):
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from config import config  # noqa: E402
+import config  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Constants (all in config; repeated here as local aliases for readability)
 # ---------------------------------------------------------------------------
-DISTANCE_THRESHOLD: float = config.grouping_distance_threshold
-LINKAGE: str = config.grouping_linkage
-EMBED_BATCH: int = config.grouping_embed_batch
-CAP: int = config.split_max_group_size_val_test
-SEED: int = config.split_seed
+DISTANCE_THRESHOLD: float = config.DISTANCE_THRESHOLD
+LINKAGE: str = config.LINKAGE
+EMBED_BATCH: int = config.EMBED_BATCH
+CAP: int = config.MAX_GROUP_SIZE_VAL_TEST
+SEED: int = config.SEED
 
 
 # ---------------------------------------------------------------------------
@@ -142,7 +142,7 @@ def _load_or_compute_embeddings(gt_paths: list[Path], cache_dir: Path) -> np.nda
     t0 = time.time()
 
     model = MobileNetV2(
-        weights=config.embedding_weights,
+        weights=config.EMBED_WEIGHTS,
         include_top=False,
         pooling="avg",
     )
@@ -239,8 +239,8 @@ def _size_aware_split(
             groups_in_domain.setdefault(gid, []).append(int(i))
 
         n_images = len(idx_domain)
-        val_target = max(1, round(n_images * config.split_val_fraction))
-        test_target = max(1, round(n_images * config.split_test_fraction))
+        val_target = max(1, round(n_images * config.VAL_FRACTION))
+        test_target = max(1, round(n_images * config.TEST_FRACTION))
 
         # Groups larger than CAP always go to train
         eligible: list[tuple[int, list[int]]] = []
@@ -439,7 +439,7 @@ def build_split(
     import sklearn
     import cv2 as cv
 
-    split_path = config.split_file
+    split_path = config.SPLIT_FILE
     split_path.parent.mkdir(parents=True, exist_ok=True)
 
     if split_path.exists() and not rebuild:
@@ -465,7 +465,7 @@ def build_split(
     print(f"  Outdoor (IDs 01-55): {n_outdoor}   Indoor: {(~is_outdoor).sum()}")
 
     # -- Embeddings ---------------------------------------------------------
-    embeddings = _load_or_compute_embeddings(gt_paths, config.cache_dir)
+    embeddings = _load_or_compute_embeddings(gt_paths, config.CACHE_DIR)
 
     # -- Group or random labels ----------------------------------------------
     if split_mode == "grouped":
@@ -556,12 +556,12 @@ def build_split(
     # -- Write JSON ----------------------------------------------------------
     split_data = {
         "method": {
-            "embedding_model":       config.embedding_model,
-            "embedding_weights":     config.embedding_weights,
-            "linkage":               config.grouping_linkage,
-            "distance_threshold":    config.grouping_distance_threshold,
-            "cap":                   config.split_max_group_size_val_test,
-            "seed":                  config.split_seed,
+            "embedding_model":       config.EMBED_MODEL,
+            "embedding_weights":     config.EMBED_WEIGHTS,
+            "linkage":               config.LINKAGE,
+            "distance_threshold":    config.DISTANCE_THRESHOLD,
+            "cap":                   config.MAX_GROUP_SIZE_VAL_TEST,
+            "seed":                  config.SEED,
             "split_mode":            split_mode,
             "note": (
                 "Grouping uses MobileNetV2 cosine distance with average linkage "
@@ -611,8 +611,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     build_split(
-        hazy_dir=config.hazy_full_dir,
-        gt_dir=config.gt_full_dir,
+        hazy_dir=config.HAZY_FULL_DIR,
+        gt_dir=config.GT_FULL_DIR,
         rebuild=args.rebuild_split,
         split_mode=args.split_mode,
     )
