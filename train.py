@@ -78,6 +78,9 @@ def setup_pix2pix(lambda_l1=100):
     gen_opt.build(generator.trainable_variables)
     disc_opt.build(discriminator.trainable_variables)
 
+    # tf.function turns the step into a graph: much faster on GPU than eager mode.
+    # reduce_retracing: the last batch is smaller, do not build a new graph for every shape.
+    @tf.function(reduce_retracing=True)
     def train_step(hazy, clear):
         with tf.GradientTape() as gen_tape, tf.GradientTape() as disc_tape:
             fake = generator(hazy, training=True)
@@ -91,6 +94,7 @@ def setup_pix2pix(lambda_l1=100):
         disc_opt.apply_gradients(zip(disc_grads, discriminator.trainable_variables))
         return gen_loss, disc_loss
 
+    @tf.function(reduce_retracing=True)
     def val_step(hazy, clear):
         fake = generator(hazy, training=False)
         return (tf.reduce_mean(tf.abs(clear - fake)),
