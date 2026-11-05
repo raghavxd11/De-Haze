@@ -27,16 +27,22 @@ Files 56 and above are JPEG data with a `.png` name; `cv2.imread` reads them fin
 ```
 python train.py --model unet                    # 60 epochs, batch 3
 python train.py --model pix2pix                 # 15 epochs, batch 3
-python train.py --model pix2pix --resume        # continue from outputs/checkpoints
 python train.py --model unet --small --epochs 1 # quick check on 55 images
 ```
 
 Other options: `--epochs`, `--batch-size`, `--preprocess clahe_hls|clahe|none`,
-`--output-dir`, `--rebuild-split`. Run `python train.py --help` for all of them.
+`--max-hours` (default 10), `--output-dir`, `--checkpoint-dir`, `--rebuild-split`.
+Run `python train.py --help` for all of them.
 
-Models are saved to `outputs/models/<model>/` as `.keras` and `.h5`, plus a `.json`
+A checkpoint is saved after every epoch in `outputs/checkpoints/<model>/`. Running the
+same command again continues from it. To start over, use another `--checkpoint-dir`.
+Training stops early when the validation loss has not improved for 5 epochs, or before
+`--max-hours` would be passed.
+
+Models are saved to `outputs/models/<model>/`: the final model as `.keras` and `.h5`,
+the best one (lowest validation loss) as `<name>_best.keras`, each with a `.json`
 file that records the preprocessing mode. `infer.py` reads this file so that inference
-uses the same preprocessing as training. Pix2Pix saves a checkpoint every 5 epochs.
+uses the same preprocessing as training. `log.csv` has one row per epoch.
 
 `--small` is only for debugging. Do not report numbers from it.
 

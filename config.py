@@ -12,7 +12,8 @@ UNET_BATCH_SIZE = 3
 P2P_EPOCHS = 15
 P2P_BATCH_SIZE = 3
 SEED = 42
-CHECKPOINT_EVERY = 5           # Pix2Pix: save a checkpoint every N epochs
+EARLY_STOP_PATIENCE = 5        # stop if val loss has not improved for this many epochs
+MAX_HOURS = 10                 # stop cleanly before Kaggle's 12-hour limit
 
 # Preprocessing of hazy images: "clahe_hls" (original), "clahe" or "none"
 PREPROCESS_MODE = "clahe_hls"
