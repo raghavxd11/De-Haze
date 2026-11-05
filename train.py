@@ -18,7 +18,7 @@ if str(REPO_ROOT) not in sys.path:
 
 import config
 from data import get_datasets
-from splits.split_builder import build_split
+from split import build_split
 from unet_train import train_unet
 from pix2pix_train import train_pix2pix
 
@@ -88,11 +88,7 @@ def main():
     # 1. Rebuild split if requested
     if args.rebuild_split:
         print("[Train] Rebuilding split_v1.json as requested by --rebuild-split...")
-        build_split(
-            hazy_dir=config.HAZY_FULL_DIR,
-            gt_dir=config.GT_FULL_DIR,
-            rebuild=True,
-        )
+        build_split(rebuild=True)
 
     # 2. Resolve hyperparameters
     if args.model == "unet":
