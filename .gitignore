@@ -1,3 +1,33 @@
+# Byte-compiled / optimized / IDE
 __pycache__
 .idea
 models
+
+# Model weights and artifacts
+*.h5
+*.keras
+
+# Output directories (splits/ remains tracked)
+outputs/
+
+# Virtual environments
+.venv/
+venv/
+
+# Notebook and test caches
+.ipynb_checkpoints/
+.pytest_cache/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Generated video outputs
+*.mp4
+*.avi
+*.mov
+*.mkv
+!sample_test_files/**
+
+# Claude Code local settings (not committed)
+.claude/

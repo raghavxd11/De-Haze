@@ -1,121 +1,84 @@
 import tensorflow as tf
-from tensorflow.keras.layers import Input, Conv2D, BatchNormalization, LeakyReLU, Concatenate, UpSampling2D, Flatten, Dense, MaxPooling2D, concatenate
+from tensorflow.keras.layers import (
+    Input, Conv2D, BatchNormalization, Concatenate,
+)
 from tensorflow.keras.models import Model
-
-with tf.device('/CPU:0'):
-    def generator_model():
-        input_shape = (256, 256, 3)
-        inputs = Input(shape=input_shape)
-
-        # encoder
-        conv1 = Conv2D(64, (3, 3), activation='relu', padding='same')(inputs)
-        conv1 = Conv2D(64, (3, 3), activation='relu', padding='same')(conv1)
-
-        pool1 = MaxPooling2D(pool_size=(2, 2))(conv1)
-
-        conv2 = Conv2D(128, (3, 3), activation='relu', padding='same')(pool1)
-        conv2 = Conv2D(128, (3, 3), activation='relu', padding='same')(conv2)
-
-        pool2 = MaxPooling2D(pool_size=(2, 2))(conv2)
-
-        conv3 = Conv2D(256, (3, 3), activation='relu', padding='same')(pool2)
-        conv3 = Conv2D(256, (3, 3), activation='relu', padding='same')(conv3)
-
-        pool3 = MaxPooling2D(pool_size=(2, 2))(conv3)
-
-        conv4 = Conv2D(512, (3, 3), activation='relu', padding='same')(pool3)
-        conv4 = Conv2D(512, (3, 3), activation='relu', padding='same')(conv4)
-
-        pool4 = MaxPooling2D(pool_size=(2, 2))(conv4)
-
-        conv5 = Conv2D(1024, (3, 3), activation='relu', padding='same')(pool4)
-        conv5 = Conv2D(1024, (3, 3), activation='relu', padding='same')(conv5)
-
-        # Decoder
-        up6 = concatenate([UpSampling2D(size=(2, 2))(conv5), conv4], axis=-1)
-        conv6 = Conv2D(512, (3, 3), activation='relu', padding='same')(up6)
-
-        conv6 = Conv2D(512, (3, 3), activation='relu', padding='same')(conv6)
-
-        up7 = concatenate([UpSampling2D(size=(2, 2))(conv6), conv3], axis=-1)
-        conv7 = Conv2D(256, (3, 3), activation='relu', padding='same')(up7)
-
-        conv7 = Conv2D(256, (3, 3), activation='relu', padding='same')(conv7)
-
-        up8 = concatenate([UpSampling2D(size=(2, 2))(conv7), conv2], axis=-1)
-        conv8 = Conv2D(128, (3, 3), activation='relu', padding='same')(up8)
-
-        conv8 = Conv2D(128, (3, 3), activation='relu', padding='same')(conv8)
-
-        up9 = concatenate([UpSampling2D(size=(2, 2))(conv8), conv1], axis=-1)
-        conv9 = Conv2D(64, (3, 3), activation='relu', padding='same')(up9)
-
-        conv9 = Conv2D(64, (3, 3), activation='relu', padding='same')(conv9)
-
-        outputs = Conv2D(3, (1, 1), activation='sigmoid')(conv9)
-
-        model = Model(inputs=[inputs], outputs=[outputs])
-
-        return model
+from config import config
+from unet_model import unet
 
 
-    def generator_loss(disc_generated_output, gen_output, target, LAMBDA=100):
-        loss_object = tf.keras.losses.BinaryCrossentropy(from_logits=True)
-        # GAN loss
-        gan_loss = loss_object(tf.ones_like(disc_generated_output), disc_generated_output)
-
-        gen_output_resized = tf.image.resize(gen_output, (256, 256), method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
-
-        # Mean absolute error (L1 loss)
-        l1_loss = tf.reduce_mean(tf.abs(target - gen_output_resized))
-
-        # Total generator loss
-        total_gen_loss = gan_loss + (LAMBDA * l1_loss)
-
-        return total_gen_loss, gan_loss, l1_loss
+def generator_model(input_shape=config.input_shape):
+    return unet(input_shape)
 
 
-    def discriminator_model(input_shape):
-        input_image = Input(shape=input_shape)
-        target_image = Input(shape=input_shape)
+def generator_loss(disc_generated_output, gen_output, target, LAMBDA=100):
+    loss_object = tf.keras.losses.BinaryCrossentropy(from_logits=True)
+    # GAN loss
+    gan_loss = loss_object(tf.ones_like(disc_generated_output), disc_generated_output)
 
-        # Concatenate input_image and target_image along the channel dimension
-        concatenated_image = Concatenate()([input_image, target_image])
+    # Mean absolute error (L1 loss)
+    l1_loss = tf.reduce_mean(tf.abs(target - gen_output))
 
-        x = Conv2D(64, (4, 4), strides=(2, 2), padding='same')(concatenated_image)
-        x = LeakyReLU(alpha=0.2)(x)
+    # Total generator loss
+    total_gen_loss = gan_loss + (LAMBDA * l1_loss)
 
-        x = Conv2D(128, (4, 4), strides=(2, 2), padding='same')(x)
-        x = BatchNormalization()(x)
-        x = LeakyReLU(alpha=0.2)(x)
-
-        x = Conv2D(256, (4, 4), strides=(2, 2), padding='same')(x)
-        x = BatchNormalization()(x)
-        x = LeakyReLU(alpha=0.2)(x)
-
-        x = Conv2D(512, (4, 4), strides=(2, 2), padding='same')(x)
-        x = BatchNormalization()(x)
-        x = LeakyReLU(alpha=0.2)(x)
-
-        x = Conv2D(1, (4, 4), strides=(1, 1), padding='same')(x)
-
-        x = Flatten()(x)
-        x = Dense(1)(x)
-
-        model = Model(inputs=[input_image, target_image], outputs=x)
-
-        return model
+    return total_gen_loss, gan_loss, l1_loss
 
 
-    def discriminator_loss(disc_real_output, disc_generated_output):
-        loss_object = tf.keras.losses.BinaryCrossentropy(from_logits=True)
-        # Real loss
-        real_loss = loss_object(tf.ones_like(disc_real_output), disc_real_output)
+def discriminator_model(input_shape=config.input_shape):
+    """PatchGAN discriminator (70×70 receptive field).
 
-        # Generated loss
-        generated_loss = loss_object(tf.zeros_like(disc_generated_output), disc_generated_output)
+    Outputs a spatial map of shape (None, H', W', 1) where each element
+    represents a local patch verdict. BinaryCrossentropy(from_logits=True)
+    is applied element-wise during training, identical to the pix2pix paper.
+    """
+    input_image = Input(shape=input_shape, name="disc_input")
+    target_image = Input(shape=input_shape, name="disc_target")
 
-        # Total discriminator loss
-        total_disc_loss = real_loss + generated_loss
+    # Concatenate input_image and target_image along the channel dimension
+    x = Concatenate()([input_image, target_image])          # (B,H,W,6)
 
-        return total_disc_loss
+    # Block 1 – no BN on first layer (pix2pix convention)
+    x = Conv2D(64,  (4, 4), strides=(2, 2), padding="same",
+               use_bias=True)(x)
+    x = tf.keras.layers.LeakyReLU(negative_slope=0.2)(x)   # 128×128
+
+    # Block 2
+    x = Conv2D(128, (4, 4), strides=(2, 2), padding="same",
+               use_bias=False)(x)
+    x = BatchNormalization()(x)
+    x = tf.keras.layers.LeakyReLU(negative_slope=0.2)(x)   # 64×64
+
+    # Block 3
+    x = Conv2D(256, (4, 4), strides=(2, 2), padding="same",
+               use_bias=False)(x)
+    x = BatchNormalization()(x)
+    x = tf.keras.layers.LeakyReLU(negative_slope=0.2)(x)   # 32×32
+
+    # Block 4 – stride-1 to keep spatial resolution before final conv
+    x = Conv2D(512, (4, 4), strides=(1, 1), padding="same",
+               use_bias=False)(x)
+    x = BatchNormalization()(x)
+    x = tf.keras.layers.LeakyReLU(negative_slope=0.2)(x)   # 32×32
+
+    # Patch output – 1 channel, no activation (logits for BCE)
+    x = Conv2D(1,   (4, 4), strides=(1, 1), padding="same",
+               use_bias=True, name="disc_output")(x)        # (B,32,32,1)
+
+    model = Model(inputs=[input_image, target_image], outputs=x,
+                  name="patchgan_discriminator")
+    return model
+
+
+def discriminator_loss(disc_real_output, disc_generated_output):
+    loss_object = tf.keras.losses.BinaryCrossentropy(from_logits=True)
+    # Real loss
+    real_loss = loss_object(tf.ones_like(disc_real_output), disc_real_output)
+
+    # Generated loss
+    generated_loss = loss_object(tf.zeros_like(disc_generated_output), disc_generated_output)
+
+    # Total discriminator loss
+    total_disc_loss = real_loss + generated_loss
+
+    return total_disc_loss
