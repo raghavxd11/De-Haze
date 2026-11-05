@@ -12,6 +12,8 @@ end up in two splits.
 import argparse
 import hashlib
 import json
+import os
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -143,6 +145,9 @@ def build_split(rebuild=False, out=config.SPLIT_FILE):
     if out.exists() and not rebuild:
         print(f"[Split] Using existing {out}")
         return json.loads(out.read_text(encoding="utf-8"))
+    if os.environ.get("KAGGLE_KERNEL_RUN_TYPE") or Path("/kaggle/input").exists():
+        # Library versions there differ and can change the groups; always use the saved file
+        raise SystemExit("[Split] Refusing to build the split on Kaggle. Upload splits/split_v1.json instead.")
 
     import keras
     import sklearn

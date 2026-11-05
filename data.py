@@ -81,6 +81,7 @@ def split_pairs(split_file=config.SPLIT_FILE, hazy_dir=config.HAZY_FULL_DIR, gt_
     if not split_file.exists():
         raise FileNotFoundError(f"{split_file} not found. Run 'python split.py' to create it.")
     splits = json.loads(split_file.read_text(encoding="utf-8"))["splits"]
+    print(f"[Data] Split from {split_file.name}: " + ", ".join(f"{k} {len(v)}" for k, v in splits.items()))
     return [[(hazy_dir / item["hazy"], gt_dir / item["gt"]) for item in splits[name]]
             for name in ("train", "val", "test")]
 
