@@ -1,315 +1,111 @@
-"""
-data.py — Efficient data loading and tf.data dataset pipeline for De-Haze.
-
-Key design principles (Phase 3 Change Group 2):
-1. cv2.imread loads all images in native BGR format (handles JPEGs disguised as .png).
-2. Images are resized directly to target size (256x256) as uint8 using cv2.INTER_AREA;
-   full-resolution originals are never kept in memory.
-3. Preprocessing (preprocess_mode: "clahe_hls" | "clahe" | "none") is applied ONLY to
-   hazy images at load time on uint8 BGR. Ground truth is NEVER preprocessed.
-4. Resized uint8 arrays are cached on disk under outputs/cache/ (gitignored),
-   keyed by file-list hash + image dimensions + preprocess mode.
-5. Undecodable files are logged with names and count, stopping with a clear RuntimeError.
-6. tf.data.Dataset pipeline applies shuffle, batch, and prefetch; no sklearn train_test_split.
-7. Supports full dataset (via splits/split_v1.json) and --small subset (IDs 01-55, outdoor only,
-   deterministic 80/20 split, with explicit debug/smoke-test logging).
-"""
-
-from __future__ import annotations
-
 import hashlib
 import json
-import logging
-from pathlib import Path
-from typing import Sequence, Tuple
 
 import cv2
 import numpy as np
 import tensorflow as tf
 
 import config
-from preprocess import preprocess, prepare_input
+from preprocess import prepare_input
 
-logger = logging.getLogger(__name__)
-
-
-def _compute_cache_key(
-    pairs: Sequence[Tuple[Path, Path]],
-    target_size: Tuple[int, int],
-    preprocess_mode: str,
-) -> str:
-    """Deterministic hash based on pair filenames, target dimensions, and preprocess mode."""
-    h = hashlib.sha256()
-    h.update(f"{target_size[0]}x{target_size[1]}_{preprocess_mode}".encode("utf-8"))
-    for h_path, g_path in pairs:
-        h.update(h_path.name.encode("utf-8"))
-        h.update(g_path.name.encode("utf-8"))
-    return h.hexdigest()[:16]
+IMAGE_EXTS = {".png", ".jpg", ".jpeg"}
 
 
-def load_and_cache_pairs(
-    pairs: Sequence[Tuple[Path, Path]],
-    target_size: Tuple[int, int] = config.IMG_SIZE,
-    preprocess_mode: str = config.PREPROCESS_MODE,
-    cache_dir: Path = config.CACHE_DIR,
-    split_name: str = "data",
-) -> Tuple[np.ndarray, np.ndarray]:
-    """Load, preprocess hazy images, resize directly to uint8, and cache on disk.
+def load_pairs(pairs, mode, name, cache_dir=config.CACHE_DIR):
+    """Load (hazy, gt) image pairs as uint8 BGR arrays of shape (N, 256, 256, 3).
 
-    Args:
-        pairs: List of (hazy_path, gt_path) tuples.
-        target_size: (height, width) tuple, defaults to (256, 256).
-        preprocess_mode: "none" | "clahe" | "clahe_hls".
-        cache_dir: Path to directory for cache files.
-        split_name: Name prefix for cache identification.
-
-    Returns:
-        (hazy_array, gt_array) as uint8 BGR numpy arrays of shape (N, H, W, 3).
-
-    Raises:
-        RuntimeError: If any image cannot be decoded by cv2.imread.
+    Only hazy images are preprocessed. Results are cached as .npz in outputs/cache,
+    keyed by the file names, image size and preprocess mode.
     """
+    w, h = config.IMG_SIZE
     if not pairs:
-        empty = np.empty((0, target_size[0], target_size[1], 3), dtype=np.uint8)
+        empty = np.empty((0, h, w, 3), dtype=np.uint8)
         return empty, empty
 
-    cache_dir = Path(cache_dir)
+    key = hashlib.sha256(f"{w}x{h}_{mode}".encode())
+    for hazy_path, gt_path in pairs:
+        key.update(hazy_path.name.encode())
+        key.update(gt_path.name.encode())
     cache_dir.mkdir(parents=True, exist_ok=True)
-
-    cache_key = _compute_cache_key(pairs, target_size, preprocess_mode)
-    cache_file = cache_dir / f"{split_name}_{cache_key}_{target_size[0]}x{target_size[1]}_{preprocess_mode}.npz"
+    cache_file = cache_dir / f"{name}_{key.hexdigest()[:16]}_{w}x{h}_{mode}.npz"
 
     if cache_file.exists():
-        print(f"[Data Cache] Loading cached {split_name} ({len(pairs)} pairs) from {cache_file.name} …")
-        with np.load(str(cache_file)) as data:
-            return data["hazy"], data["gt"]
+        print(f"[Data] Loading {name} ({len(pairs)} pairs) from cache {cache_file.name}")
+        with np.load(cache_file) as d:
+            return d["hazy"], d["gt"]
 
-    print(f"[Data] Decoding, preprocessing ({preprocess_mode}), and caching {len(pairs)} pairs for {split_name} …")
-
-    hazy_list = []
-    gt_list = []
-    undecodable = []
-
-    for h_path, g_path in pairs:
-        # Load hazy image in native BGR
-        h_img = cv2.imread(str(h_path))
-        if h_img is None:
-            undecodable.append(str(h_path))
+    print(f"[Data] Reading {len(pairs)} pairs for {name} (preprocess: {mode})")
+    hazy_list, gt_list, bad = [], [], []
+    for hazy_path, gt_path in pairs:
+        # cv2.imread reads the real format, so JPEGs saved as .png still work
+        hazy = cv2.imread(str(hazy_path))
+        if hazy is None:
+            bad.append(str(hazy_path))
             continue
-
-        # Prepare hazy image: preprocess at original resolution then resize to uint8
-        h_resized = prepare_input(h_img, mode=preprocess_mode, size=target_size)
-
-        # Load ground truth image in native BGR (never preprocessed!)
-        g_img = cv2.imread(str(g_path))
-        if g_img is None:
-            undecodable.append(str(g_path))
+        gt = cv2.imread(str(gt_path))
+        if gt is None:
+            bad.append(str(gt_path))
             continue
+        hazy_list.append(prepare_input(hazy, mode))
+        gt_list.append(cv2.resize(gt, config.IMG_SIZE, interpolation=cv2.INTER_AREA))
 
-        # Direct stretch resize to uint8 (cv2.INTER_AREA)
-        g_resized = cv2.resize(g_img, target_size, interpolation=cv2.INTER_AREA)
-
-        hazy_list.append(h_resized)
-        gt_list.append(g_resized)
-
-    if undecodable:
-        err_msg = (
-            f"[FATAL] cv2.imread failed to decode {len(undecodable)} files:\n"
-            + "\n".join(f"  - {f}" for f in undecodable)
-        )
-        print(err_msg)
-        raise RuntimeError(err_msg)
+    if bad:
+        raise RuntimeError(f"Could not read {len(bad)} files:\n" + "\n".join("  - " + f for f in bad))
 
     hazy_arr = np.array(hazy_list, dtype=np.uint8)
     gt_arr = np.array(gt_list, dtype=np.uint8)
-
-    # Save to disk cache
-    np.savez_compressed(str(cache_file), hazy=hazy_arr, gt=gt_arr)
-    print(f"[Data Cache] Saved {len(pairs)} pairs to {cache_file.name}")
-
+    np.savez_compressed(cache_file, hazy=hazy_arr, gt=gt_arr)
+    print(f"[Data] Saved cache {cache_file.name}")
     return hazy_arr, gt_arr
 
 
-def get_small_pairs(
-    hazy_dir: Path = config.HAZY_SMALL_DIR,
-    gt_dir: Path = config.GT_SMALL_DIR,
-) -> Tuple[list[Tuple[Path, Path]], list[Tuple[Path, Path]]]:
-    """Deterministic 80/20 train/val split of the 55 outdoor pairs (IDs 01-55)."""
-    hazy_files = {p.name: p for p in sorted(hazy_dir.iterdir())
-                  if p.suffix.lower() in {".png", ".jpg", ".jpeg"}}
-    gt_files = {p.name: p for p in sorted(gt_dir.iterdir())
-                if p.suffix.lower() in {".png", ".jpg", ".jpeg"}}
-
-    matched: list[Tuple[Path, Path]] = []
-    unmatched_count = 0
-    for hname, hpath in sorted(hazy_files.items()):
-        gt_name = hname.replace("_hazy.png", "_GT.png").replace("_hazy.jpg", "_GT.jpg")
-        if gt_name in gt_files:
-            matched.append((hpath, gt_files[gt_name]))
+def small_pairs(hazy_dir=config.HAZY_SMALL_DIR, gt_dir=config.GT_SMALL_DIR):
+    """The 55 outdoor pairs (IDs 01-55), split 44 train / 11 val by file name."""
+    gt_names = {p.name for p in gt_dir.iterdir() if p.suffix.lower() in IMAGE_EXTS}
+    pairs = []
+    for hazy_path in sorted(hazy_dir.iterdir()):
+        if hazy_path.suffix.lower() not in IMAGE_EXTS:
+            continue
+        gt_name = hazy_path.name.replace("_hazy.png", "_GT.png").replace("_hazy.jpg", "_GT.jpg")
+        if gt_name in gt_names:
+            pairs.append((hazy_path, gt_dir / gt_name))
         else:
-            print(f"  [WARNING] Unmatched hazy file: {hname}")
-            unmatched_count += 1
+            print(f"[Data] WARNING: no GT image for {hazy_path.name}")
 
-    if unmatched_count:
-        print(f"  [WARNING] Total unmatched small files: {unmatched_count}")
-
-    matched.sort(key=lambda t: t[0].name)
-
-    # Deterministic 80/20 split (44 train / 11 val)
-    n_train = int(len(matched) * 0.8)
-    train_pairs = matched[:n_train]
-    val_pairs = matched[n_train:]
-    return train_pairs, val_pairs
+    n_train = int(len(pairs) * 0.8)
+    return pairs[:n_train], pairs[n_train:]
 
 
-def get_split_pairs(
-    split_file: Path = config.SPLIT_FILE,
-    hazy_dir: Path = config.HAZY_FULL_DIR,
-    gt_dir: Path = config.GT_FULL_DIR,
-) -> Tuple[list[Tuple[Path, Path]], list[Tuple[Path, Path]], list[Tuple[Path, Path]]]:
-    """Read train, val, and test pairs defined in splits/split_v1.json."""
+def split_pairs(split_file=config.SPLIT_FILE, hazy_dir=config.HAZY_FULL_DIR, gt_dir=config.GT_FULL_DIR):
+    """Train, val and test pairs listed in splits/split_v1.json."""
     if not split_file.exists():
-        raise FileNotFoundError(
-            f"Split file '{split_file}' does not exist. "
-            f"Run 'python splits/split_builder.py' to generate it."
-        )
-
-    with open(split_file, "r", encoding="utf-8") as f:
-        data = json.load(f)
-
-    splits = data["splits"]
-    train_pairs = [(hazy_dir / item["hazy"], gt_dir / item["gt"]) for item in splits["train"]]
-    val_pairs = [(hazy_dir / item["hazy"], gt_dir / item["gt"]) for item in splits["val"]]
-    test_pairs = [(hazy_dir / item["hazy"], gt_dir / item["gt"]) for item in splits["test"]]
-
-    return train_pairs, val_pairs, test_pairs
+        raise FileNotFoundError(f"{split_file} not found. Run 'python split.py' to create it.")
+    splits = json.loads(split_file.read_text(encoding="utf-8"))["splits"]
+    return [[(hazy_dir / item["hazy"], gt_dir / item["gt"]) for item in splits[name]]
+            for name in ("train", "val", "test")]
 
 
-def make_tf_dataset(
-    hazy_arr: np.ndarray,
-    gt_arr: np.ndarray,
-    batch_size: int,
-    is_training: bool = False,
-    shuffle_buffer: int = 1000,
-    seed: int = config.SEED,
-) -> tf.data.Dataset:
-    """Create an efficient tf.data.Dataset from uint8 numpy arrays.
-
-    Normalizes pixel values to [0.0, 1.0] float32 on-the-fly.
-    Applies shuffle (if training), batch, and prefetch(AUTOTUNE).
-    """
-    dataset = tf.data.Dataset.from_tensor_slices((hazy_arr, gt_arr))
-
-    if is_training:
-        dataset = dataset.shuffle(
-            buffer_size=min(len(hazy_arr), shuffle_buffer),
-            seed=seed,
-            reshuffle_each_iteration=True,
-        )
-
-    # Cast to float32 and normalize [0, 255] -> [0.0, 1.0]
-    def _normalize(h_u8, g_u8):
-        h_f32 = tf.cast(h_u8, tf.float32) / 255.0
-        g_f32 = tf.cast(g_u8, tf.float32) / 255.0
-        return h_f32, g_f32
-
-    dataset = dataset.map(_normalize, num_parallel_calls=tf.data.AUTOTUNE)
-    dataset = dataset.batch(batch_size, drop_remainder=False)
-    dataset = dataset.prefetch(tf.data.AUTOTUNE)
-    return dataset
+def make_dataset(hazy, gt, batch_size, training=False):
+    """tf.data pipeline: shuffle (train only), scale to [0, 1], batch, prefetch."""
+    ds = tf.data.Dataset.from_tensor_slices((hazy, gt))
+    if training:
+        ds = ds.shuffle(min(len(hazy), 1000), seed=config.SEED, reshuffle_each_iteration=True)
+    ds = ds.map(lambda h, g: (tf.cast(h, tf.float32) / 255.0, tf.cast(g, tf.float32) / 255.0),
+                num_parallel_calls=tf.data.AUTOTUNE)
+    return ds.batch(batch_size).prefetch(tf.data.AUTOTUNE)
 
 
-def get_dehaze_datasets(
-    split_file: Path = config.SPLIT_FILE,
-    hazy_dir: Path | None = None,
-    gt_dir: Path | None = None,
-    batch_size: int = config.UNET_BATCH_SIZE,
-    preprocess_mode: str = config.PREPROCESS_MODE,
-    small: bool = False,
-    shuffle_buffer: int = 1000,
-) -> Tuple[tf.data.Dataset, tf.data.Dataset]:
-    """High-level function providing train and val tf.data datasets.
-
-    Args:
-        split_file: Path to split_v1.json (used when small=False).
-        hazy_dir: Directory containing hazy images.
-        gt_dir: Directory containing ground truth images.
-        batch_size: Batch size for both train and val datasets.
-        preprocess_mode: "clahe_hls" (default) | "clahe" | "none".
-        small: If True, uses the 55-pair outdoor subset (IDs 01-55).
-        shuffle_buffer: Buffer size for training shuffle.
-
-    Returns:
-        (train_dataset, val_dataset) as tf.data.Dataset instances.
-    """
+def get_datasets(batch_size, mode=config.PREPROCESS_MODE, small=False):
+    """Return (train_ds, val_ds). small=True is for quick debug runs only."""
     if small:
-        print("=" * 70)
-        print("[Data] Using --small subset (IDs 01-55, outdoor only, 44 train / 11 val).")
-        print("[Data] NOTE: This subset is outdoor only and is a debug/smoke-test mode")
-        print("[Data] that must NOT be used for formal benchmark numbers.")
-        print("=" * 70)
-        h_dir = hazy_dir or config.HAZY_SMALL_DIR
-        g_dir = gt_dir or config.GT_SMALL_DIR
-        train_pairs, val_pairs = get_small_pairs(h_dir, g_dir)
-        train_prefix, val_prefix = "small_train", "small_val"
+        print("[Data] --small: 55 outdoor pairs (44 train / 11 val). Debug only, not for reported numbers.")
+        train, val = small_pairs()
+        prefix = "small"
     else:
-        h_dir = hazy_dir or config.HAZY_FULL_DIR
-        g_dir = gt_dir or config.GT_FULL_DIR
-        train_pairs, val_pairs, _ = get_split_pairs(split_file, h_dir, g_dir)
-        train_prefix, val_prefix = "full_train", "full_val"
+        train, val, _ = split_pairs()
+        prefix = "full"
 
-    train_hazy, train_gt = load_and_cache_pairs(
-        train_pairs,
-        target_size=config.IMG_SIZE,
-        preprocess_mode=preprocess_mode,
-        cache_dir=config.CACHE_DIR,
-        split_name=train_prefix,
-    )
-    val_hazy, val_gt = load_and_cache_pairs(
-        val_pairs,
-        target_size=config.IMG_SIZE,
-        preprocess_mode=preprocess_mode,
-        cache_dir=config.CACHE_DIR,
-        split_name=val_prefix,
-    )
-
-    train_ds = make_tf_dataset(
-        train_hazy, train_gt,
-        batch_size=batch_size,
-        is_training=True,
-        shuffle_buffer=shuffle_buffer,
-    )
-    val_ds = make_tf_dataset(
-        val_hazy, val_gt,
-        batch_size=batch_size,
-        is_training=False,
-    )
-    return train_ds, val_ds
-
-
-def load_and_split(
-    hazy_dir: Path | str = config.HAZY_SMALL_DIR,
-    gt_dir: Path | str = config.GT_SMALL_DIR,
-    preprocess_mode: str = config.PREPROCESS_MODE,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, Tuple[int, int, int]]:
-    """Deterministic loader returning float32 numpy arrays [0, 1] without sklearn train_test_split.
-
-    Provided for backward compatibility with scripts expecting numpy arrays.
-    """
-    h_dir = Path(hazy_dir)
-    g_dir = Path(gt_dir)
-    train_pairs, val_pairs = get_small_pairs(h_dir, g_dir)
-
-    X_train_u8, y_train_u8 = load_and_cache_pairs(
-        train_pairs, config.IMG_SIZE, preprocess_mode, config.CACHE_DIR, "compat_train"
-    )
-    X_val_u8, y_val_u8 = load_and_cache_pairs(
-        val_pairs, config.IMG_SIZE, preprocess_mode, config.CACHE_DIR, "compat_val"
-    )
-
-    X_train = X_train_u8.astype(np.float32) / 255.0
-    y_train = y_train_u8.astype(np.float32) / 255.0
-    X_val = X_val_u8.astype(np.float32) / 255.0
-    y_val = y_val_u8.astype(np.float32) / 255.0
-
-    return X_train, X_val, y_train, y_val, config.INPUT_SHAPE
+    train_hazy, train_gt = load_pairs(train, mode, f"{prefix}_train")
+    val_hazy, val_gt = load_pairs(val, mode, f"{prefix}_val")
+    return (make_dataset(train_hazy, train_gt, batch_size, training=True),
+            make_dataset(val_hazy, val_gt, batch_size))

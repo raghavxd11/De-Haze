@@ -17,7 +17,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import config
-from data import get_dehaze_datasets
+from data import get_datasets
 from splits.split_builder import build_split
 from unet_train import train_unet
 from pix2pix_train import train_pix2pix
@@ -120,9 +120,9 @@ def main():
     print("=" * 70)
 
     # 3. Load datasets
-    train_ds, val_ds = get_dehaze_datasets(
+    train_ds, val_ds = get_datasets(
         batch_size=batch_size,
-        preprocess_mode=args.preprocess,
+        mode=args.preprocess,
         small=args.small,
     )
 
