@@ -46,6 +46,14 @@ uses the same preprocessing as training. `log.csv` has one row per epoch.
 
 `--small` is only for debugging. Do not report numbers from it.
 
+## Train on Kaggle
+
+1. `python kaggle/make_code_zip.py` creates `outputs/de-haze-code.zip` (code, split file,
+   sample files; no images, weights or caches). Upload it as a Kaggle dataset.
+2. Open `kaggle/train_kaggle.ipynb` on Kaggle, attach the code dataset and the images
+   dataset, choose a GPU and use Save & Run All.
+3. Download `weights_all.zip` from the notebook output.
+
 ## Run on an image or video
 
 ```
