@@ -98,7 +98,7 @@ def load_and_cache_pairs(
             continue
 
         # Prepare hazy image: preprocess at original resolution then resize to uint8
-        h_resized = prepare_input(h_img, mode=preprocess_mode, target_size=target_size)
+        h_resized = prepare_input(h_img, mode=preprocess_mode, size=target_size)
 
         # Load ground truth image in native BGR (never preprocessed!)
         g_img = cv2.imread(str(g_path))

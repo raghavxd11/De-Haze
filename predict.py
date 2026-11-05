@@ -64,7 +64,7 @@ def predict_and_visualize(
     orig_h, orig_w = img.shape[:2]
 
     # 1. Prepare input: preprocess at original resolution then resize to 256x256
-    model_in_uint8 = prepare_input(img, mode=mode, target_size=config.IMG_SIZE)
+    model_in_uint8 = prepare_input(img, mode=mode, size=config.IMG_SIZE)
     model_in_norm = model_in_uint8.astype(np.float32) / 255.0
     model_input = tf.convert_to_tensor(np.expand_dims(model_in_norm, axis=0), dtype=tf.float32)
 
@@ -91,15 +91,6 @@ def predict_and_visualize(
 
     # 5. Draw boxes and human count onto the dehazed output ONLY
     out_img = draw_boxes(dehazed_full, rectangles)
-    cv2.putText(
-        out_img,
-        f"Total Humans: {len(rectangles)}",
-        (10, 30),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        1,
-        (0, 0, 0),
-        2,
-    )
 
     if show:
         cv2.imshow("Raw", img)
@@ -154,7 +145,7 @@ def vid_read(
         orig_h, orig_w = frame.shape[:2]
 
         # 1. Prepare input: preprocess at original resolution then resize to 256x256
-        model_in_uint8 = prepare_input(frame, mode=mode, target_size=config.IMG_SIZE)
+        model_in_uint8 = prepare_input(frame, mode=mode, size=config.IMG_SIZE)
         model_in_norm = model_in_uint8.astype(np.float32) / 255.0
         model_input = tf.convert_to_tensor(np.expand_dims(model_in_norm, axis=0), dtype=tf.float32)
 
@@ -180,15 +171,6 @@ def vid_read(
 
         # 5. Draw boxes and human count onto dehazed output ONLY
         out_frame = draw_boxes(dehazed_full, rectangles)
-        cv2.putText(
-            out_frame,
-            f"Total Humans: {len(rectangles)}",
-            (10, 30),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            1,
-            (0, 0, 0),
-            2,
-        )
 
         frame_count += 1
 

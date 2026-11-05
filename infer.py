@@ -144,7 +144,7 @@ def process_frame(
     orig_h, orig_w = frame.shape[:2]
 
     # 1. Prepare input: preprocess at original resolution then resize to 256x256
-    model_in_uint8 = prepare_input(frame, mode=mode, target_size=config.IMG_SIZE)
+    model_in_uint8 = prepare_input(frame, mode=mode, size=config.IMG_SIZE)
     model_in_norm = model_in_uint8.astype(np.float32) / 255.0
     model_input = tf.convert_to_tensor(np.expand_dims(model_in_norm, axis=0), dtype=tf.float32)
 
@@ -173,15 +173,6 @@ def process_frame(
 
         # 5. Draw boxes and human count onto dehazed output ONLY
         out_frame = draw_boxes(dehazed_full, rectangles)
-        cv2.putText(
-            out_frame,
-            f"Total Humans: {len(rectangles)}",
-            (10, 30),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            1,
-            (0, 0, 0),
-            2,
-        )
     else:
         out_frame = dehazed_full
 
