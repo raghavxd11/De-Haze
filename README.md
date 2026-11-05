@@ -1,52 +1,99 @@
 # De-hazer
 
-**Welcome to the De-hazing project!**
+Removes haze from images and videos with a U-Net or a Pix2Pix model (TensorFlow/Keras),
+then counts people in the result with OpenCV's HOG detector.
 
-This project focuses on utilizing machine learning techniques to remove haze and enhance visibility in images and videos. The core architecture used here is the UNet neural network, well-suited for image-to-image translation tasks.
+## Setup
 
-## Basic Features
+```
+git clone https://github.com/paulrounak/De-Haze.git
+cd De-Haze
+pip install -r requirements.txt
+```
 
-**Key Features**
+TensorFlow 2.11+ has no GPU support on native Windows, so training there runs on the CPU.
 
-- **Image De-Hazing:** The model is designed to remove haze and improve visibility in images and video frames.
-- **Architecture:** This repository contains two different architectures to perform de-hazing: UNet and Pix2Pix.
-- **Requirements:** Make sure you have TensorFlow, scikit-learn, OpenCV, and other dependencies installed (see requirements.txt).
+## Dataset
 
-## Getting Started
+Put the images in `dataset/`:
 
-**Getting Started**
+- `Hazy_Full/`, `GT_Full/`: all 2036 pairs (`01_hazy.png` / `01_GT.png`, ...)
+- `Hazy_Small/`, `GT_Small/`: the 55 outdoor pairs (IDs 01-55), used by `--small`
 
-1. Clone this repository to your local machine:
+Files 56 and above are JPEG data with a `.png` name; `cv2.imread` reads them fine.
 
-   ```
-   https://github.com/paulrounak/De-Haze.git
-   ```
+## Train
 
-2. Install required dependencies using the following command
+```
+python train.py --model unet                    # 60 epochs, batch 3
+python train.py --model pix2pix                 # 15 epochs, batch 3
+python train.py --model pix2pix --resume        # continue from outputs/checkpoints
+python train.py --model unet --small --epochs 1 # quick check on 55 images
+```
 
-   pip install -r requirements.txt
+Other options: `--epochs`, `--batch-size`, `--preprocess clahe_hls|clahe|none`,
+`--output-dir`, `--rebuild-split`. Run `python train.py --help` for all of them.
 
-3. Make sure your Environment Variables are set correctly
+Models are saved to `outputs/models/<model>/` as `.keras` and `.h5`, plus a `.json`
+file that records the preprocessing mode. `infer.py` reads this file so that inference
+uses the same preprocessing as training. Pix2Pix saves a checkpoint every 5 epochs.
 
-## Trained Models
-Here is a Google Drive link to the trained models: https://drive.google.com/drive/folders/1Uh8nfn4vCnb6XOZRrU2qhV-IaLTSqJNp?usp=sharing
+`--small` is only for debugging. Do not report numbers from it.
 
-## Sample Input Output
+## Run on an image or video
 
-By enhancing the model architecture through the addition of supplementary layers and training it on high-performance dedicated GPUs, we can achieve outputs with significantly higher resolutions. You can De-Noise and Sharpen the output, to get clearer images.
+```
+python infer.py --model-path outputs/models/unet/unet.keras --input sample_test_files/hazed_img.jpg
+python infer.py --model-path outputs/models/unet/unet.keras --input sample_test_files/test_vid.mp4 --no-display
+```
 
-### **Sample Input**
+The output has the same size as the input and is saved in `outputs/`.
+Options: `--output`, `--no-display`, `--no-detect`, `--detect-on dehazed|hazy`, `--preprocess`.
+Press `q` to stop a video.
+
+## How it works
+
+1. **Preprocessing** (`preprocess.py`): CLAHE on the L channel (LAB), then L-40 / S+30 in HLS.
+   This runs on the full-size hazy image, which is then resized to 256x256 with `INTER_AREA`.
+   Ground-truth images are only resized. All images stay in BGR.
+2. **Split** (`split.py`, `splits/split_v1.json`): many indoor images show the same room.
+   Similar images are grouped (MobileNetV2 features, clustering at cosine distance 0.20) and
+   each group goes entirely into train, val or test, so the test set does not contain copies
+   of training rooms. Training always reads the saved JSON file; rebuild it only on purpose.
+3. **Models** (`models.py`): U-Net with a sigmoid output. Pix2Pix uses the same U-Net as the
+   generator and a 70x70 PatchGAN discriminator, with GAN loss + 100 x L1 loss.
+4. **Detection** (`detect.py`): HOG people detector on the dehazed output (or on the input
+   with `--detect-on hazy`).
+
+Validation PSNR and SSIM are printed after every epoch.
+
+## Files
+
+| File | Purpose |
+| --- | --- |
+| `config.py` | sizes, epochs, paths, split settings |
+| `data.py` | loading, caching (`outputs/cache/`), `tf.data` pipeline |
+| `preprocess.py` | CLAHE/HLS preprocessing |
+| `models.py` | U-Net, PatchGAN, losses |
+| `train.py` | training for both models |
+| `infer.py` | image/video inference |
+| `detect.py` | HOG human detection |
+| `split.py` | builds `splits/split_v1.json` |
+
+## Trained models
+
+Google Drive: https://drive.google.com/drive/folders/1Uh8nfn4vCnb6XOZRrU2qhV-IaLTSqJNp?usp=sharing
+
+## Sample input and output
+
+### Sample input
 
 ![sample_input](https://github.com/user-attachments/assets/8f719c78-5f23-4f6f-870f-77f907416f16)
 
-
-### **Sample Output : U-Net**
+### Output: U-Net
 
 ![output_Unet](https://github.com/user-attachments/assets/27215d29-61e2-4128-9245-d5929a19fe36)
 
-
-### **Sample Output : Pix2Pix**
+### Output: Pix2Pix
 
 ![output_Pix2Pix](https://github.com/user-attachments/assets/f80eaf93-91cf-470b-aa2b-79448e9746b2)
-
-
