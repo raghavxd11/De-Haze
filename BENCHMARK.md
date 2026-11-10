@@ -83,8 +83,8 @@ python train.py --model unet
 python train.py --model pix2pix
 
 # score our models and DCP on the test split
-python evaluate.py --model-path outputs/models/unet/unet.keras \
-                   --model-path outputs/models/pix2pix/p2p.keras --compare-dcp
+python evaluate.py --model-path outputs/models/unet/unet_best.keras \
+                   --model-path outputs/models/pix2pix/p2p_best.keras --compare-dcp --split test
 
 # external models: export the raw 256x256 test inputs, run the model elsewhere,
 # save its outputs as <hazy stem>.png, then score them
@@ -103,10 +103,13 @@ Saved copies: `results/results_test_2026-11-11.md`, `results/results_test_2026-1
 `results/results_per_image_test_2026-11-11.csv`.
 
 ```
-python evaluate.py --model-path outputs/weights_all/models/unet/unet_best.keras \
-                   --model-path outputs/weights_all/models/pix2pix/p2p_best.keras \
+python evaluate.py --model-path outputs/models/unet/unet_best.keras \
+                   --model-path outputs/models/pix2pix/p2p_best.keras \
                    --compare-dcp --split test
 ```
+
+The run itself read the files from `outputs/weights_all/models/` (the Kaggle download);
+`outputs/models/` holds byte-identical copies of the same `*_best.keras` files.
 
 Evaluation device: CPU only (AMD Ryzen 7 5800H, native Windows 11, TensorFlow 2.21,
 Keras 3.15; no GPU on native Windows). Both models were loaded with `compile=False`
