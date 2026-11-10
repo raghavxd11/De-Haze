@@ -1,113 +1,155 @@
-# De-hazer
+# De-Haze
 
-Removes haze from images and videos with a U-Net or a Pix2Pix model (TensorFlow/Keras),
-then counts people in the result with OpenCV's HOG detector.
+Removes haze from images and videos with a trained U-Net or Pix2Pix model
+(TensorFlow/Keras), then counts people in the result with OpenCV's HOG detector.
+
+Forked from [paulrounak/De-Haze](https://github.com/paulrounak/De-Haze).
+
+## Models
+
+- **U-Net**: encoder-decoder with skip connections, sigmoid output, MSE loss.
+  31,379,075 parameters.
+- **Pix2Pix**: the same U-Net as generator, plus a 70x70 PatchGAN discriminator used
+  only during training. Loss: GAN loss + 100 x L1.
+
+Both take a 256x256 BGR image and return a 256x256 BGR image.
+
+## Pipeline
+
+1. **Preprocess** (`preprocess.py`): CLAHE on the L channel (LAB), then L-40 / S+30 in
+   HLS, on the full-size image; then resize to 256x256 with `INTER_AREA`.
+2. **Dehaze** (`infer.py`): run the model, resize the output back to the input size.
+3. **Detect** (`detect.py`): HOG people detector on the dehazed output (or on the input
+   with `--detect-on hazy`).
+
+Each saved model has a `.json` file next to it with its preprocess mode; `infer.py`
+and `evaluate.py` read it so the input matches training.
 
 ## Setup
 
 ```
-git clone https://github.com/paulrounak/De-Haze.git
+git clone https://github.com/raghavxd11/De-Haze.git
 cd De-Haze
 pip install -r requirements.txt
 ```
 
-TensorFlow 2.11+ has no GPU support on native Windows, so training there runs on the CPU.
+TensorFlow 2.11+ has no GPU support on native Windows, so it runs on the CPU there.
 
-## Dataset
-
-Put the images in `dataset/`:
-
-- `Hazy_Full/`, `GT_Full/`: all 2036 pairs (`01_hazy.png` / `01_GT.png`, ...)
-- `Hazy_Small/`, `GT_Small/`: the 55 outdoor pairs (IDs 01-55), used by `--small`
-
-Files 56 and above are JPEG data with a `.png` name; `cv2.imread` reads them fine.
+Dataset: put the images in `dataset/Hazy_Full/` and `dataset/GT_Full/`
+(2,036 pairs, `01_hazy.png` / `01_GT.png`, ...). IDs 01-55 are outdoor, the rest indoor.
+The train/val/test split is fixed in `splits/split_v1.json` (similar rooms are grouped
+so a room is never in two splits; see `BENCHMARK.md`).
 
 ## Train
 
 ```
-python train.py --model unet                    # 60 epochs, batch 3
-python train.py --model pix2pix                 # 15 epochs, batch 3
-python train.py --model unet --small --epochs 1 # quick check on 55 images
+python train.py --model unet
+python train.py --model pix2pix
+python train.py --model unet --small --epochs 1   # quick check on 55 images, not for results
 ```
 
-Other options: `--epochs`, `--batch-size`, `--preprocess clahe_hls|clahe|none`,
-`--max-hours` (default 10), `--output-dir`, `--checkpoint-dir`, `--rebuild-split`.
-Run `python train.py --help` for all of them.
+Models go to `outputs/models/<model>/`: the final model, the best one
+(lowest validation loss) as `<name>_best.keras`, and `log.csv` with one row per epoch.
+A checkpoint is saved every epoch; running the same command again resumes.
+Training stops early after 5 epochs without improvement in validation loss.
+Run `python train.py --help` for all options.
 
-A checkpoint is saved after every epoch in `outputs/checkpoints/<model>/`. Running the
-same command again continues from it. To start over, use another `--checkpoint-dir`.
-Training stops early when the validation loss has not improved for 5 epochs, or before
-`--max-hours` would be passed.
+To train on Kaggle: `python kaggle/make_code_zip.py`, upload `outputs/de-haze-code.zip`
+as a dataset, and run `kaggle/train_kaggle.ipynb` with a GPU.
 
-Models are saved to `outputs/models/<model>/`: the final model as `.keras` and `.h5`,
-the best one (lowest validation loss) as `<name>_best.keras`, each with a `.json`
-file that records the preprocessing mode. `infer.py` reads this file so that inference
-uses the same preprocessing as training. `log.csv` has one row per epoch.
-
-`--small` is only for debugging. Do not report numbers from it.
-
-## Train on Kaggle
-
-1. `python kaggle/make_code_zip.py` creates `outputs/de-haze-code.zip` (code, split file,
-   sample files; no images, weights or caches). Upload it as a Kaggle dataset.
-2. Open `kaggle/train_kaggle.ipynb` on Kaggle, attach the code dataset and the images
-   dataset, choose a GPU and use Save & Run All.
-3. Download `weights_all.zip` from the notebook output.
-
-## Run on an image or video
+## Infer
 
 ```
-python infer.py --model-path outputs/models/unet/unet.keras --input sample_test_files/hazed_img.jpg
-python infer.py --model-path outputs/models/unet/unet.keras --input sample_test_files/test_vid.mp4 --no-display
+python infer.py --model-path outputs/models/unet/unet_best.keras --input sample_test_files/hazed_img.jpg
+python infer.py --model-path outputs/models/unet/unet_best.keras --input sample_test_files/test_vid.mp4 --no-display
 ```
 
-The output has the same size as the input and is saved in `outputs/`.
-Options: `--output`, `--no-display`, `--no-detect`, `--detect-on dehazed|hazy`, `--preprocess`.
-Press `q` to stop a video.
+Output is saved in `outputs/` at the input's size. Options: `--output`, `--no-display`,
+`--no-detect`, `--detect-on dehazed|hazy`, `--preprocess`. Press `q` to stop a video.
 
-## How it works
+## Evaluate
 
-1. **Preprocessing** (`preprocess.py`): CLAHE on the L channel (LAB), then L-40 / S+30 in HLS.
-   This runs on the full-size hazy image, which is then resized to 256x256 with `INTER_AREA`.
-   Ground-truth images are only resized. All images stay in BGR.
-2. **Split** (`split.py`, `splits/split_v1.json`): many indoor images show the same room.
-   Similar images are grouped (MobileNetV2 features, clustering at cosine distance 0.20) and
-   each group goes entirely into train, val or test, so the test set does not contain copies
-   of training rooms. Training always reads the saved JSON file; rebuild it only on purpose.
-3. **Models** (`models.py`): U-Net with a sigmoid output. Pix2Pix uses the same U-Net as the
-   generator and a 70x70 PatchGAN discriminator, with GAN loss + 100 x L1 loss.
-4. **Detection** (`detect.py`): HOG people detector on the dehazed output (or on the input
-   with `--detect-on hazy`).
+```
+python evaluate.py --model-path outputs/models/unet/unet_best.keras \
+                   --model-path outputs/models/pix2pix/p2p_best.keras \
+                   --compare-dcp --split test
+```
 
-Validation PSNR and SSIM are printed after every epoch.
+Writes `outputs/results.md`, `outputs/results.csv` and `outputs/results_per_image.csv`
+(overwritten on each run). DCP (Dark Channel Prior, `baselines/dcp.py`) is a
+non-learned baseline.
+
+## Results (test split, 213 images, 19 scene groups)
+
+Mean of per-scene-group means, with 95% bootstrap CI over scene groups.
+Measured 2026-11-11 on CPU. Full table and protocol: [BENCHMARK.md](BENCHMARK.md).
+
+| Method | Subset | PSNR [95% CI] | SSIM [95% CI] |
+| --- | --- | --- | --- |
+| U-Net | overall | 18.45 [17.23, 19.69] | 0.7098 [0.6430, 0.7729] |
+| U-Net | indoor (207) | 19.91 [18.95, 20.97] | 0.7813 [0.7314, 0.8287] |
+| U-Net | outdoor (6) | 15.26 [14.38, 16.28] | 0.5550 [0.4614, 0.6278] |
+| Pix2Pix | overall | 17.69 [16.42, 18.96] | 0.6709 [0.6043, 0.7352] |
+| Pix2Pix | indoor (207) | 19.12 [17.96, 20.40] | 0.7383 [0.6821, 0.7942] |
+| Pix2Pix | outdoor (6) | 14.58 [13.79, 15.33] | 0.5251 [0.4401, 0.5973] |
+| DCP | overall | 13.35 [11.86, 15.06] | 0.6183 [0.5375, 0.7000] |
+| DCP | indoor (207) | 14.17 [12.23, 16.43] | 0.7159 [0.6567, 0.7765] |
+| DCP | outdoor (6) | 11.57 [10.23, 12.89] | 0.4069 [0.3130, 0.5007] |
+
+Both models have higher PSNR than DCP (CIs do not overlap). On SSIM the CIs overlap.
+The U-Net and Pix2Pix CIs overlap everywhere, so neither is shown to be better.
+DCP is about 100x faster on CPU (11.9 ms vs about 1,100 ms per image).
+
+## Samples
+
+Three test-split images (not seen in training), `unet_best.keras`, made with `infer.py`.
+Left to right: hazy input, U-Net output, ground truth.
+
+Outdoor, image 06 (PSNR 17.52; outdoor median 15.25). Dense haze: the structure comes
+back but most of the color does not.
+
+![outdoor 06](docs/sample_outdoor_06.png)
+
+Indoor, image 103 (PSNR 22.31; indoor median 20.25).
+
+![indoor 103](docs/sample_indoor_103.png)
+
+Indoor, image 1212 (PSNR 19.18).
+
+![indoor 1212](docs/sample_indoor_1212.png)
+
+Images were chosen by a fixed rule (first outdoor test image, first image of the two
+lowest-numbered indoor test groups), not by score.
+
+## Limitations
+
+- About 97% of the data is indoor; the outdoor test set has only 6 images.
+- The test set has 19 scene groups, so confidence intervals are wide.
+- U-Net overfits: at its best epoch train loss is 0.0027 and val loss 0.0190.
+- Validation scores were used to pick the best epoch, so they are optimistic.
+- Everything is done at 256x256 (aspect ratio not kept); outputs are upscaled back,
+  so fine detail is lost and some outputs show blotchy texture.
+- One training run per model.
+- PSNR and SSIM do not fully match how a person judges image quality.
+- HOG people detection is not evaluated.
+
+More in [BENCHMARK.md](BENCHMARK.md).
 
 ## Files
 
 | File | Purpose |
 | --- | --- |
 | `config.py` | sizes, epochs, paths, split settings |
-| `data.py` | loading, caching (`outputs/cache/`), `tf.data` pipeline |
+| `data.py` | loading, caching, `tf.data` pipeline |
 | `preprocess.py` | CLAHE/HLS preprocessing |
 | `models.py` | U-Net, PatchGAN, losses |
 | `train.py` | training for both models |
 | `infer.py` | image/video inference |
-| `detect.py` | HOG human detection |
+| `detect.py` | HOG people detection |
+| `evaluate.py` | test-split scoring |
+| `baselines/dcp.py` | Dark Channel Prior baseline |
 | `split.py` | builds `splits/split_v1.json` |
+| `kaggle/` | Kaggle notebook and code zip script |
 
-## Trained models
-
-Google Drive: https://drive.google.com/drive/folders/1Uh8nfn4vCnb6XOZRrU2qhV-IaLTSqJNp?usp=sharing
-
-## Sample input and output
-
-### Sample input
-
-![sample_input](https://github.com/user-attachments/assets/8f719c78-5f23-4f6f-870f-77f907416f16)
-
-### Output: U-Net
-
-![output_Unet](https://github.com/user-attachments/assets/27215d29-61e2-4128-9245-d5929a19fe36)
-
-### Output: Pix2Pix
-
-![output_Pix2Pix](https://github.com/user-attachments/assets/f80eaf93-91cf-470b-aa2b-79448e9746b2)
+Trained models from the original repository (not the ones measured above):
+https://drive.google.com/drive/folders/1Uh8nfn4vCnb6XOZRrU2qhV-IaLTSqJNp?usp=sharing
