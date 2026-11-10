@@ -79,6 +79,13 @@ Writes `outputs/results.md`, `outputs/results.csv` and `outputs/results_per_imag
 (overwritten on each run). DCP (Dark Channel Prior, `baselines/dcp.py`) is a
 non-learned baseline.
 
+## Tests
+
+```
+pip install pytest
+python -m pytest tests
+```
+
 ## Results (test split, 213 images, 19 scene groups)
 
 Mean of per-scene-group means, with 95% bootstrap CI over scene groups.
