@@ -6,25 +6,21 @@ Removes haze from images and videos with a trained U-Net or Pix2Pix model
 Based on [paulrounak/De-Haze](https://github.com/paulrounak/De-Haze) by Rounak Paul.
 The original U-Net / Pix2Pix dehazing and HOG people detection are from that project.
 
-## Models
+## Changes from the original
 
-- **U-Net**: encoder-decoder with skip connections, sigmoid output, MSE loss.
-  31,379,075 parameters.
-- **Pix2Pix**: the same U-Net as generator, plus a 70x70 PatchGAN discriminator used
-  only during training. Loss: GAN loss + 100 x L1.
+- One shared input preparation (`prepare_input` in `preprocess.py`) for training and
+  inference. The original resized before preprocessing for single images at inference,
+  but preprocessed before resizing in training.
+- People detection runs after dehazing, and boxes are never drawn on the model input.
+- The Pix2Pix discriminator is now a PatchGAN.
+- Scene-grouped train/val/test split, saved in `splits/split_v1.json`.
+- Command-line tools `train.py`, `infer.py` and `evaluate.py`; training saves a
+  checkpoint every epoch and resumes from it.
+- PSNR/SSIM evaluation with bootstrap confidence intervals and a Dark Channel Prior
+  baseline (see `BENCHMARK.md`).
+- Kaggle training notebook (`kaggle/train_kaggle.ipynb`).
 
-Both take a 256x256 BGR image and return a 256x256 BGR image.
-
-## Pipeline
-
-1. **Preprocess** (`preprocess.py`): CLAHE on the L channel (LAB), then L-40 / S+30 in
-   HLS, on the full-size image; then resize to 256x256 with `INTER_AREA`.
-2. **Dehaze** (`infer.py`): run the model, resize the output back to the input size.
-3. **Detect** (`detect.py`): HOG people detector on the dehazed output (or on the input
-   with `--detect-on hazy`).
-
-Each saved model has a `.json` file next to it with its preprocess mode; `infer.py`
-and `evaluate.py` read it so the input matches training.
+This README does not compare our models with the original trained models.
 
 ## Setup
 
@@ -36,62 +32,50 @@ pip install -r requirements.txt
 
 TensorFlow 2.11+ has no GPU support on native Windows, so it runs on the CPU there.
 
-Dataset: put the images in `dataset/Hazy_Full/` and `dataset/GT_Full/`
-(2,036 pairs, `01_hazy.png` / `01_GT.png`, ...). IDs 01-55 are outdoor, the rest indoor.
-The train/val/test split is fixed in `splits/split_v1.json` (similar rooms are grouped
-so a room is never in two splits; see `BENCHMARK.md`).
+For training and evaluation, put the images in `dataset/Hazy_Full/` and
+`dataset/GT_Full/` (2,036 pairs, `01_hazy.png` / `01_GT.png`, ...). IDs 01-55 are
+outdoor, the rest indoor. The split is fixed in `splits/split_v1.json`.
 
 ## Download weights
 
 The trained weights are not stored in git because of their size. Download them from
 [Google Drive](https://drive.google.com/drive/folders/1Fe-RD5ahCbl81Zmt51i4dKgplzGB1Jl5?usp=drive_link).
 
-The folder has `unet_best.keras` + `unet_best.json` and `p2p_best.keras` + `p2p_best.json`.
-Put the U-Net files in `outputs/models/unet/` and the Pix2Pix files in
-`outputs/models/pix2pix/`. Each `.json` file holds the preprocessing mode, so keep it
-next to its `.keras` file.
+- `unet_best.keras` + `unet_best.json` go in `outputs/models/unet/`
+- `p2p_best.keras` + `p2p_best.json` go in `outputs/models/pix2pix/`
 
-Then run, for example:
+Each `.json` file holds the preprocessing mode, so keep it next to its `.keras` file.
+Both models were trained on Kaggle with Keras 3.13 and loaded locally with Keras 3.15.
+No dataset is needed to run inference.
 
-```
-python infer.py --model-path outputs/models/unet/unet_best.keras --input your_image.jpg
-```
+## Usage
 
-No dataset or training is needed to run inference. Add `--no-display` to skip the
-preview window.
+Both models take a 256x256 BGR image and return a 256x256 BGR image; `infer.py`
+resizes the output back to the input size.
 
-Both models were trained on Kaggle (Keras 3.13) and loaded and evaluated locally with
-Keras 3.15. They were tested only on this dataset at 256x256 (see `BENCHMARK.md` for
-results and limitations).
-
-## Train
-
-```
-python train.py --model unet
-python train.py --model pix2pix
-python train.py --model unet --small --epochs 1   # quick check on 55 images, not for results
-```
-
-Models go to `outputs/models/<model>/`: the final model, the best one
-(lowest validation loss) as `<name>_best.keras`, and `log.csv` with one row per epoch.
-A checkpoint is saved every epoch; running the same command again resumes.
-Training stops early after 5 epochs without improvement in validation loss.
-Run `python train.py --help` for all options.
-
-To train on Kaggle: `python kaggle/make_code_zip.py`, upload `outputs/de-haze-code.zip`
-as a dataset, and run `kaggle/train_kaggle.ipynb` with a GPU.
-
-## Infer
+**Infer**
 
 ```
 python infer.py --model-path outputs/models/unet/unet_best.keras --input sample_test_files/hazed_img.jpg
 python infer.py --model-path outputs/models/unet/unet_best.keras --input sample_test_files/test_vid.mp4 --no-display
 ```
 
-Output is saved in `outputs/` at the input's size. Options: `--output`, `--no-display`,
-`--no-detect`, `--detect-on dehazed|hazy`, `--preprocess`. Press `q` to stop a video.
+Output is saved in `outputs/`. Options: `--output`, `--no-display`, `--no-detect`,
+`--detect-on dehazed|hazy`, `--preprocess`. Press `q` to stop a video.
 
-## Evaluate
+**Train**
+
+```
+python train.py --model unet
+python train.py --model pix2pix
+```
+
+The best model (lowest validation loss) is saved as `outputs/models/<model>/<name>_best.keras`.
+Running the same command again resumes from the last checkpoint. Training stops after
+5 epochs without improvement. On Kaggle: run `python kaggle/make_code_zip.py`, upload
+`outputs/de-haze-code.zip` as a dataset, and run `kaggle/train_kaggle.ipynb` with a GPU.
+
+**Evaluate**
 
 ```
 python evaluate.py --model-path outputs/models/unet/unet_best.keras \
@@ -99,16 +83,9 @@ python evaluate.py --model-path outputs/models/unet/unet_best.keras \
                    --compare-dcp --split test
 ```
 
-Writes `outputs/results.md`, `outputs/results.csv` and `outputs/results_per_image.csv`
-(overwritten on each run). DCP (Dark Channel Prior, `baselines/dcp.py`) is a
-non-learned baseline.
+Writes `outputs/results.md`, `outputs/results.csv` and `outputs/results_per_image.csv`.
 
-## Tests
-
-```
-pip install pytest
-python -m pytest tests
-```
+**Tests**: `pip install pytest`, then `python -m pytest tests`.
 
 ## Results (test split, 213 images, 19 scene groups)
 
@@ -133,8 +110,8 @@ DCP is about 100x faster on CPU (11.9 ms vs about 1,100 ms per image).
 
 ## Samples
 
-Three test-split images (not seen in training), `unet_best.keras`, made with `infer.py`.
-Left to right: hazy input, U-Net output, ground truth.
+Three test-split images (not seen in training), `unet_best.keras`.
+Left to right: hazy input, U-Net output, ground truth. Chosen by a fixed rule, not by score.
 
 Outdoor, image 06 (PSNR 17.52; outdoor median 15.25). Dense haze: the structure comes
 back but most of the color does not.
@@ -149,36 +126,13 @@ Indoor, image 1212 (PSNR 19.18).
 
 ![indoor 1212](docs/sample_indoor_1212.png)
 
-Images were chosen by a fixed rule (first outdoor test image, first image of the two
-lowest-numbered indoor test groups), not by score.
-
-## Changes from the original
-
-- One shared input preparation (`prepare_input` in `preprocess.py`) for training and
-  inference. The original resized before preprocessing for single images at inference,
-  but preprocessed before resizing in training.
-- People detection runs after dehazing, and boxes are never drawn on the model input.
-- The Pix2Pix discriminator is now a PatchGAN.
-- Scene-grouped train/val/test split, saved in `splits/split_v1.json`.
-- Command-line tools `train.py`, `infer.py` and `evaluate.py`; training saves a
-  checkpoint every epoch and resumes from it.
-- PSNR/SSIM evaluation with bootstrap confidence intervals and a Dark Channel Prior
-  baseline (see `BENCHMARK.md`).
-- Kaggle training notebook (`kaggle/train_kaggle.ipynb`).
-
-This README does not compare our models with the original trained models.
-
 ## Limitations
 
 - About 97% of the data is indoor; the outdoor test set has only 6 images.
 - The test set has 19 scene groups, so confidence intervals are wide.
 - U-Net overfits: at its best epoch train loss is 0.0027 and val loss 0.0190.
-- Validation scores were used to pick the best epoch, so they are optimistic.
-- Everything is done at 256x256 (aspect ratio not kept); outputs are upscaled back,
-  so fine detail is lost and some outputs show blotchy texture.
-- One training run per model.
-- PSNR and SSIM do not fully match how a person judges image quality.
-- HOG people detection is not evaluated.
+- Everything runs at 256x256 (aspect ratio not kept), so fine detail is lost.
+- One training run per model. HOG people detection is not evaluated.
 
 More in [BENCHMARK.md](BENCHMARK.md).
 
@@ -197,6 +151,3 @@ More in [BENCHMARK.md](BENCHMARK.md).
 | `baselines/dcp.py` | Dark Channel Prior baseline |
 | `split.py` | builds `splits/split_v1.json` |
 | `kaggle/` | Kaggle notebook and code zip script |
-
-Trained models from the original repository (not the ones measured above):
-https://drive.google.com/drive/folders/1Uh8nfn4vCnb6XOZRrU2qhV-IaLTSqJNp?usp=sharing
