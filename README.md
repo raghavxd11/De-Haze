@@ -41,6 +41,29 @@ Dataset: put the images in `dataset/Hazy_Full/` and `dataset/GT_Full/`
 The train/val/test split is fixed in `splits/split_v1.json` (similar rooms are grouped
 so a room is never in two splits; see `BENCHMARK.md`).
 
+## Download weights
+
+The trained weights are not stored in git because of their size. Download them from
+[Google Drive](https://drive.google.com/drive/folders/1Fe-RD5ahCbl81Zmt51i4dKgplzGB1Jl5?usp=drive_link).
+
+The folder has `unet_best.keras` + `unet_best.json` and `p2p_best.keras` + `p2p_best.json`.
+Put the U-Net files in `outputs/models/unet/` and the Pix2Pix files in
+`outputs/models/pix2pix/`. Each `.json` file holds the preprocessing mode, so keep it
+next to its `.keras` file.
+
+Then run, for example:
+
+```
+python infer.py --model-path outputs/models/unet/unet_best.keras --input your_image.jpg
+```
+
+No dataset or training is needed to run inference. Add `--no-display` to skip the
+preview window.
+
+Both models were trained on Kaggle (Keras 3.13) and loaded and evaluated locally with
+Keras 3.15. They were tested only on this dataset at 256x256 (see `BENCHMARK.md` for
+results and limitations).
+
 ## Train
 
 ```
