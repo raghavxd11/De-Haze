@@ -3,7 +3,8 @@
 Removes haze from images and videos with a trained U-Net or Pix2Pix model
 (TensorFlow/Keras), then counts people in the result with OpenCV's HOG detector.
 
-Forked from [paulrounak/De-Haze](https://github.com/paulrounak/De-Haze).
+Based on [paulrounak/De-Haze](https://github.com/paulrounak/De-Haze) by Rounak Paul.
+The original U-Net / Pix2Pix dehazing and HOG people detection are from that project.
 
 ## Models
 
@@ -127,6 +128,22 @@ Indoor, image 1212 (PSNR 19.18).
 
 Images were chosen by a fixed rule (first outdoor test image, first image of the two
 lowest-numbered indoor test groups), not by score.
+
+## Changes from the original
+
+- One shared input preparation (`prepare_input` in `preprocess.py`) for training and
+  inference. The original resized before preprocessing for single images at inference,
+  but preprocessed before resizing in training.
+- People detection runs after dehazing, and boxes are never drawn on the model input.
+- The Pix2Pix discriminator is now a PatchGAN.
+- Scene-grouped train/val/test split, saved in `splits/split_v1.json`.
+- Command-line tools `train.py`, `infer.py` and `evaluate.py`; training saves a
+  checkpoint every epoch and resumes from it.
+- PSNR/SSIM evaluation with bootstrap confidence intervals and a Dark Channel Prior
+  baseline (see `BENCHMARK.md`).
+- Kaggle training notebook (`kaggle/train_kaggle.ipynb`).
+
+This README does not compare our models with the original trained models.
 
 ## Limitations
 
