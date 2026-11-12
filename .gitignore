@@ -28,9 +28,3 @@ Thumbs.db
 *.mov
 *.mkv
 !sample_test_files/**
-
-# Claude Code local settings (not committed)
-.claude/
-
-# Old code kept locally after simplification (not committed)
-_old/
